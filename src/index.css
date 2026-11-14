@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", ui-sans-serif, sans-serif;
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #0b0b0c;
+  --color-plum: #6e6e75;
+  --color-ember: #f2f2f4;
+  --color-present: #5ef2b0;
+  --color-absent: #ff5d73;
+}
+
+html, body, #root { min-height: 100dvh; }
+html { background: #0b0b0c; color-scheme: dark; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: #fff;
+  background: var(--color-ink);
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+}
+button { cursor: pointer; font-family: inherit; }
+button:disabled { cursor: not-allowed; }
+
+/* ---------- Liquid glass ---------- */
+.glass {
+  position: relative;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.09) 0%, rgba(255,255,255,.03) 50%, rgba(255,255,255,.06) 100%), rgba(24,24,26,.92);
+  border: 1px solid rgba(255,255,255,.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 -1.5px 0 rgba(255,255,255,.07),
+    inset 1.5px 0 1px -1px rgba(255,255,255,.25),
+    inset -1.5px 0 1px -1px rgba(255,255,255,.18),
+    0 14px 44px -10px rgba(0,0,0,.9),
+    0 2px 8px rgba(0,0,0,.25);
+}
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 70% at 12% 0%, rgba(255,255,255,.14), transparent 46%);
+}
+.glass-deep {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,.08), rgba(255,255,255,.02) 55%, rgba(255,255,255,.05)), rgba(18,18,20,.96);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.lens {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.26), rgba(255,255,255,.10)),
+    rgba(60,60,64,.7);
+  border: 1px solid rgba(255,255,255,.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.45),
+    inset 0 -6px 14px rgba(255,255,255,.04),
+    0 6px 20px -6px rgba(0,0,0,.8);
+}
+.glass-btn { transition: transform .18s cubic-bezier(.3,1.6,.5,1), background .2s; }
+.glass-btn:active:not(:disabled) { transform: scale(.92); }
+
+/* ---------- Ambient background ---------- */
+.orb { display: none; position: absolute; border-radius: 9999px; filter: blur(70px); opacity: .75; will-change: transform; }
+.orb-a { width: 340px; height: 340px; background: #b0346b; top: -90px; left: -80px; animation: drift-a 22s ease-in-out infinite alternate; }
+.orb-b { width: 300px; height: 300px; background: #d9601f; top: 38%; right: -120px; opacity: .55; animation: drift-b 26s ease-in-out infinite alternate; }
+.orb-c { width: 360px; height: 360px; background: #3a2fa8; bottom: -140px; left: -60px; opacity: .55; animation: drift-c 30s ease-in-out infinite alternate; }
+@keyframes drift-a { to { transform: translate(120px, 160px) scale(1.15); } }
+@keyframes drift-b { to { transform: translate(-140px, -120px) scale(.9); } }
+@keyframes drift-c { to { transform: translate(160px, -140px) scale(1.2); } }
+.grain {
+  display: none;
+  position: absolute; inset: 0; opacity: .08; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .orb { animation: none; }
+}
+
+/* Focus mode: hide the bottom navigation (and lock bar) whenever a popup is open */
+[data-bottom-nav], [data-lockbar] { transition: opacity .2s ease, transform .25s ease; }
+body:has([data-modal]) [data-bottom-nav],
+body:has([data-modal]) [data-lockbar] { opacity: 0; transform: translateY(28px); pointer-events: none; visibility: hidden; transition: opacity .2s ease, transform .25s ease, visibility 0s .25s; }
+
+/* ---------- Performance ----------
+   The page background is solid matte black, so per-element backdrop blur adds nothing visible but costs a GPU layer each.
+   It is kept only where content actually scrolls underneath (the fixed top and bottom bars) and on pop-up sheets. */
+header .glass, footer .glass {
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+/* Long lists: skip layout and paint for rows that are off-screen. */
+.cv-auto { content-visibility: auto; contain-intrinsic-size: auto 132px; }
+.glass-btn { will-change: auto; }
+html { -webkit-text-size-adjust: 100%; }
+body { text-rendering: optimizeSpeed; }
+.no-blur { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
