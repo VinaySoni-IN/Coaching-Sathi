@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .vite-source-tags.js
+
+# local preview uploads / artifacts
+uploads
+.vite-source-tags.js

@@ -8,7 +8,7 @@ import { mulDiv, paiseToInput, rupeeInput, toPaise } from '../lib/money'
 import { newRef } from '../lib/store'
 import { feeReminderText, waLink } from '../lib/wa'
 import { WHO } from '../lib/recipient'
-import { byPaidOrder, dateKey, monthKey, paidDate } from '../lib/ledger'
+import { byPaidOrder, dateKey, paidDate } from '../lib/ledger'
 import type { Adjustment, Batch, Charge, State, Student, Txn } from '../lib/store'
 
 function Shell({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {

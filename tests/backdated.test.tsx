@@ -7,7 +7,7 @@ import { statement } from '../src/lib/accounts'
 import { addPayments, checkIntegrity, mergeStates } from '../src/lib/payments'
 import { byPaidOrder, rebuild } from '../src/lib/ledger'
 import { buildFeeWorkbook } from '../src/lib/report'
-import { makeState, batch, stu, R, NOW } from './helpers'
+import { makeState, batch, stu, R } from './helpers'
 import type { State } from '../src/lib/store'
 
 const ok = (r: { ok: boolean; state?: State; reason?: string }) => { if (!r.ok) throw new Error(r.reason); return r.state as State }

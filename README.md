@@ -41,7 +41,7 @@ npm run dev        # http://localhost:5173
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
 | `npm test` | Vitest suite (happy-dom), 305 tests across 19 files |
-| `npm run lint` | ESLint |
+| `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
 
@@ -68,4 +68,16 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 - Storage keys are prefixed `coachdesk:` — accounts, session, and one data blob per teacher.
 - `xlsx` is installed from the npm registry (`^0.18.5`) rather than the SheetJS CDN tarball so
   `npm ci` works in environments that can't reach `cdn.sheetjs.com`.
-- Deployment targets GitHub Pages: pushing to `main` runs tests, builds, and publishes `dist/`.
+- Deployment targets GitHub Pages: pushing to `main` runs lint + tests, builds, and publishes `dist/`.
+  All asset URLs are relative (`base: './'`) and the service worker caches with relative paths, so the
+  app works from the project sub-path (`https://<user>.github.io/Coaching-Sathi/`) without changes.
+  `dist/index.html` is also copied to `dist/404.html` so unknown paths fall back to the shell.
+
+## Deploying
+
+1. In **Settings → Pages**, set *Source* to **GitHub Actions**.
+2. Push to `main` (or run the *Deploy to GitHub Pages* workflow manually).
+3. The site is published at `https://<user>.github.io/Coaching-Sathi/`.
+
+Files that are intentionally **not** in the repo: `uploads/` (scratch images from the archive, unused
+by the app), `dist/` (build output) and `.vite-source-tags.js` (local editor tooling).

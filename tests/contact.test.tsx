@@ -19,7 +19,6 @@ const both: Student = { ...stu('s1', 'Aarav Sharma', '01'), parentName: 'Mrs Sha
 const onlyStudent: Student = stu('s2', 'Diya Menon', '02')
 const onlyParent: Student = { ...stu('s3', 'Kabir Singh', '03'), phone: '\u2014', parentPhone: '+91 98222 33344' }
 // the browser may report a colour as hex or rgb(); normalise both so the test checks the colour, not the notation
-const rgb = (hex: string) => hex
 const norm = (c: string) => { const m = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(c); return m ? '#' + [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, '0')).join('') : c.toLowerCase() }
 
 function Wa({ students }: { students: Student[] }) {
