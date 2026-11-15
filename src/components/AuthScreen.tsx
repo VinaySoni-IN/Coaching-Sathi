@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Eye, EyeOff, Loader2, LogIn, ShieldCheck, UserPlus } from 'lucide-react'
+import { Eye, EyeOff, GraduationCap, Loader2, LogIn, ShieldCheck, UserPlus } from 'lucide-react'
 import { listTeachers, signIn, signUp } from '../lib/auth'
 import type { Teacher } from '../lib/auth'
 import { seedJson } from '../lib/store'
@@ -51,7 +51,7 @@ export default function AuthScreen({ onAuth }: { onAuth: (t: Teacher) => void })
       >
         <div className="relative z-10">
           <div className="mb-5 flex items-center gap-3">
-            <img src={`${import.meta.env.BASE_URL}logo-256.png`} alt="" width={48} height={48} className="h-12 w-12 shrink-0" />
+            <div className="lens grid h-12 w-12 place-items-center rounded-2xl"><GraduationCap size={24} /></div>
             <div>
               <h1 className="font-display text-[26px] font-semibold leading-none">Coaching Sathi</h1>
               <p className="mt-1 text-[13px] text-white/70">{mode === 'in' ? 'Teacher sign in' : 'Create your teacher account'}</p>
