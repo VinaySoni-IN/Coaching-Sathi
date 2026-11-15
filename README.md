@@ -75,28 +75,31 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 
 ## Branding & app icons
 
-The icon set is derived from the master artwork (`1254 × 1254`, dark card with the graduation cap,
-books and magnifier) and lives in `public/`:
+The mark is the **premium 3D artwork** (graduation cap, books, magnifier, wordmark) prepared for
+launcher use rather than dropped in as-is.
+
+**Crop.** The source is a 1254² render with a soft card and empty margin around the art. The icon set
+crops to the ink itself (brightness bounding box, +3.5 % breathing room) instead of the card, so the
+logo fills the tile edge to edge — on a home screen the difference is roughly 15 % more logo for the
+same icon size.
+
+**Enhance.** Upscaled 2× with Lanczos, unsharp-masked (radius 2.4 / 95 %), then contrast +6 %,
+saturation +10 %, brightness +2 %, and a light sharpening pass after the final downscale. This puts
+detail back that the original downscale lost and stops the purple glow going muddy at 192 px.
 
 | File | Size | Used for |
 | --- | --- | --- |
-| `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` — Android home screen, desktop install, task switcher |
-| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — Android adaptive icons. Artwork is inset to 70 % so nothing important is lost when the launcher crops it to a circle/squircle |
-| `apple-touch-icon.png` | 180² | iOS home screen. Opaque and full-bleed — iOS applies its own rounded-corner mask |
-| `logo-256.png` | 256² | in-app brand mark (sign-in screen). Rounded corners, transparent outside |
-| `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers. Rounded tile (14.3/64 ≈ 22.4 % corner radius), transparent outside the curve |
-| `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, Windows shortcuts |
+| `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` |
+| `icon-maskable-512.png` | 512² | `purpose: maskable` — art inset to 82 % so a circular launcher crop never clips it |
+| `apple-touch-icon.png` | 180² | iOS home screen, opaque, full-bleed |
+| `logo-256.png` | 256² | in-app brand mark (sign-in screen), rounded + transparent |
+| `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers, squircle corners |
+| `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, shortcuts |
 
-Design notes:
-
-- Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio — drawn at 4× and
-  downsampled for clean edges.
-- The favicon uses the **emblem only** (cap + books + magnifier), because the wordmark is unreadable
-  below ~48 px.
-- The artwork's background is pure black and the graduation cap is pure black too, so the icons keep
-  an opaque black tile (required by iOS anyway) and use transparency only outside the rounded curve.
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v4`) so
-  already-installed copies pick up the new cache.
+- The favicon uses the **emblem only** (cap + books + magnifier): the wordmark is unreadable at 16–48 px.
+- Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio.
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v7`) so
+  installed copies refresh.
 
 ## Deploying to Vercel
 
