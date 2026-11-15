@@ -9,7 +9,8 @@ import { createStudentIn, updateStudentIn } from '../src/lib/payments'
 import { isDob, isPhoto, ageOf, sanitizeState, rebuild, byPaidOrder } from '../src/lib/ledger'
 import { attendanceRates, rateLabel } from '../src/lib/attendance'
 import { statement, studentRows, monthTotals } from '../src/lib/accounts'
-import { signUp, signIn, currentTeacher, signOut } from '../src/lib/auth'
+import { cachedTeacher, changePassword, deleteAccount, renameTeacher, restoreSession, signIn, signOut, signUp } from '../src/lib/auth'
+import { expireFakeSession } from './fakeCloud'
 import { DEFAULT_TEMPLATES } from '../src/lib/wa'
 import { makeState, batch, stu, tx, R, NOW } from './helpers'
 import type { State, Student } from '../src/lib/store'
@@ -228,49 +229,50 @@ describe('Cached ledger equals a fresh calculation (CA)', () => {
   })
 })
 
-describe('Staying signed in (AU)', () => {
-  const NOWMS = Date.now()
-  it('AU-01 signing in survives a "reload" and never asks again on later days', async () => {
-    await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
-    expect(currentTeacher()?.email).toBe('priya.sharma@gmail.com')
-    for (const days of [1, 2, 8, 40, 200]) expect(currentTeacher(NOWMS + days * 86_400_000 - 1000)?.email, `${days} days`).toBe('priya.sharma@gmail.com')
-  })
-  it('AU-02 every open renews the session (sliding window), so regular use never expires', async () => {
-    await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
-    const t0 = Date.now()
-    // used every 300 days for 3 years: would have expired without renewal
-    let t = t0
-    for (let i = 0; i < 4; i++) { t += 300 * 86_400_000; expect(currentTeacher(t)).not.toBeNull(); const s = JSON.parse(localStorage.getItem('coachdesk:session')!); s.at = t; localStorage.setItem('coachdesk:session', JSON.stringify(s)) }
-  })
-  it('AU-03 only a very long absence (over 13 months) or an explicit sign-out ends it', async () => {
-    await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
-    expect(currentTeacher(Date.now() + 500 * 86_400_000)).toBeNull()
-    await signIn('priya.sharma@gmail.com', 'secret1')
-    expect(currentTeacher()).not.toBeNull()
-    signOut()
-    expect(currentTeacher()).toBeNull()
-  })
-  it('AU-04 a session saved by an older version (just the id) is still honoured, and a corrupt one is ignored', async () => {
+describe('Staying signed in (AU) — cloud session', () => {
+  it('AU-01 a sign-in survives a reload: the session and the teacher are restored from the server', async () => {
     const t = await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
-    localStorage.setItem('coachdesk:session', t.id)
-    expect(currentTeacher()?.id).toBe(t.id)
-    expect(JSON.parse(localStorage.getItem('coachdesk:session')!).id).toBe(t.id) // upgraded in place
-    localStorage.setItem('coachdesk:session', '{"id":5,"at":"x"}')
-    expect(currentTeacher()).toBeNull()
-    localStorage.setItem('coachdesk:session', '{bad json')
-    expect(currentTeacher()).toBeNull()
+    expect(t.email).toBe('priya.sharma@gmail.com')
+    // "reload": a fresh restoreSession() finds the persisted session and the profile row
+    await expect(restoreSession()).resolves.toMatchObject({ id: t.id, email: 'priya.sharma@gmail.com' })
+    expect(cachedTeacher()?.id).toBe(t.id)
   })
-  it('AU-05 a session for a deleted account does not sign anyone in', async () => {
+  it('AU-02 the cached teacher opens the app instantly, without waiting for the network', async () => {
     const t = await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
-    localStorage.setItem('coachdesk:accounts', '[]')
-    localStorage.setItem('coachdesk:session', JSON.stringify({ id: t.id, at: Date.now() }))
-    expect(currentTeacher()).toBeNull()
+    expect(cachedTeacher()).toMatchObject({ id: t.id, email: 'priya.sharma@gmail.com' })
+    // even with the server unreachable, the cached identity is still there for the first paint
+    expect(cachedTeacher()?.name).toBe('Priya')
   })
-  it('AU-06 signing in asks the browser to keep the data (persistent storage)', async () => {
-    const persist = vi.fn().mockResolvedValue(true)
-    Object.defineProperty(navigator, 'storage', { value: { persist }, configurable: true })
+  it('AU-03 signing out ends it: no session, no cached teacher', async () => {
     await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
-    expect(persist).toHaveBeenCalled()
+    await signOut()
+    await expect(restoreSession()).resolves.toBeNull()
+    expect(cachedTeacher()).toBeNull()
+  })
+  it('AU-04 a leftover cached teacher is never trusted on its own: the session decides', async () => {
+    localStorage.setItem('coachdesk:teacher', JSON.stringify({ id: 'ghost', name: 'Ghost', email: 'ghost@example.com' }))
+    expireFakeSession()
+    expect(cachedTeacher()?.id).toBe('ghost')          // used only for the first paint
+    await expect(restoreSession()).resolves.toBeNull() // ...and dropped when no session exists
+  })
+  it('AU-05 deleting the account removes the account, the data and the local copy', async () => {
+    const t = await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
+    localStorage.setItem(`coachdesk:data:${t.id}`, JSON.stringify({ v: 3, batches: [] }))
+    await deleteAccount(t.id)
+    expect(localStorage.getItem(`coachdesk:data:${t.id}`)).toBeNull()
+    expect(cachedTeacher()).toBeNull()
+    await expect(restoreSession()).resolves.toBeNull()
+    await expect(signIn('priya.sharma@gmail.com', 'secret1')).rejects.toThrow(/incorrect/)
+  })
+  it('AU-06 the profile name and password really change in the account', async () => {
+    const t = await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
+    const renamed = await renameTeacher('Priya Sharma')
+    expect(renamed.name).toBe('Priya Sharma')
+    expect(cachedTeacher()?.name).toBe('Priya Sharma')
+    await changePassword('secret1', 'secret2')
+    await signOut()
+    await expect(signIn('priya.sharma@gmail.com', 'secret1')).rejects.toThrow(/incorrect/)
+    await expect(signIn('priya.sharma@gmail.com', 'secret2')).resolves.toMatchObject({ id: t.id })
   })
 })
 

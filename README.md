@@ -117,6 +117,42 @@ feather, then 2 % breathing room and a 4× Lanczos downscale with a light unshar
   gives every release brand-new URLs, which is why those files can be cached `immutable`.
   Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v13`).
 
+## Cloud sync (Supabase)
+
+Accounts and data are **online**: signing in on any device brings the whole workspace with it.
+
+| Piece | What it does |
+| --- | --- |
+| Supabase Auth | email + password, session persisted and refreshed; password reset by email |
+| `public.profiles` | one row per user (`id → auth.users`), display name + canonical mailbox (Gmail dots/`+tags` cannot create two accounts) |
+| `public.app_state` | one row per user holding the whole workspace document as `jsonb`, plus a `rev` |
+| `public.sync_log` | the last 25 snapshots of that document, so any bad write can be put back |
+| `push_state(doc, expected_rev, client)` | the only write path: locks the row, rejects stale revisions, bumps `rev` |
+| `v_batches` `v_students` `v_attendance` `v_payments` `v_charges` `v_adjustments` | the document shredded into ordinary rows for SQL/reporting |
+| `delete_me()` | "delete account & data" — drops the auth user, which cascades to every row |
+
+Row level security is on for all three tables; every policy is `auth.uid() = user_id`, and `anon` has no grants at all.
+
+**Lifecycle** (`src/lib/sync.ts`)
+
+- **on login** — `hydrate()` pulls the cloud document, merges it with whatever this device has
+  (`mergeStates`, the same union used between tabs), writes the result to the local backup and pushes
+  whatever the cloud did not have yet. Old pre-account data (`coachdesk:v1`, `coachdesk:data:*`) is
+  folded in on the first login and never dropped.
+- **on every change** — debounced 1.2 s, then pushed with the revision it was based on.
+- **conflicts** — a stale write is rejected by Postgres (`40001 stale_rev`); the device then pulls the
+  newer copy, merges, and retries once. Two devices can never silently overwrite each other.
+- **offline** — writes queue in memory, the local backup keeps working, the UI shows *Offline*, and the
+  queue flushes on `online`/tab-focus or the next change.
+
+**Local is only a backup.** `coachdesk:data:<userId>` exists so the app opens instantly and works with
+no network; `coachdesk:teacher` holds the signed-in identity for the first paint and is always verified
+against the server. Signing out clears both, and the cloud row is the source of truth.
+
+**Setup**: run the migrations in `supabase/migrations/` (SQL editor or `supabase db push`), then set
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (see `.env.example`; both are public values). Vercel
+already has them for production, preview and development.
+
 ## Deploying to Vercel
 
 `vercel.json` pins everything Vercel needs, so the import needs no manual settings:

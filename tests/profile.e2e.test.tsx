@@ -15,6 +15,7 @@ const seed = () => {
   const st = JSON.parse(seedJson(true, 'Bright Minds')) as State
   localStorage.setItem('coachdesk:accounts', JSON.stringify([{ id: 't1', name: 'Priya Sharma', email: 'priya@example.com', salt: '', hash: '', createdAt: 0 }]))
   localStorage.setItem('coachdesk:session', JSON.stringify({ id: 't1', at: Date.now() }))
+  localStorage.setItem('coachdesk:teacher', JSON.stringify({ id: 't1', name: 'Priya Sharma', email: 'priya@example.com' }))
   localStorage.setItem(KEY, JSON.stringify(rebuild(st)))
 }
 const saved = () => JSON.parse(localStorage.getItem(KEY) as string) as State

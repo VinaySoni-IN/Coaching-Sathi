@@ -8,8 +8,11 @@ import FeesPage from './components/FeesPage'
 import AuthScreen from './components/AuthScreen'
 import { BatchForm, StudentForm } from './components/ManageSheets'
 import type { BatchTarget, StudentTarget } from './components/ManageSheets'
-import { currentTeacher, deleteAccount, dataKeyFor, renameTeacher, signOut } from './lib/auth'
+import { cachedTeacher, clearTeacherCache, deleteAccount, dataKeyFor, renameTeacher, restoreSession, signOut } from './lib/auth'
 import type { Teacher } from './lib/auth'
+import { hydrate, sync } from './lib/sync'
+import type { SyncInfo } from './lib/sync'
+import SyncGate from './components/SyncGate'
 import StudentsPage from './components/StudentsPage'
 import StudentProfile from './components/StudentProfile'
 import AddParentSheet from './components/AddParentSheet'
@@ -34,7 +37,7 @@ import { LockBar, Toast } from './components/Overlays'
 import ConfirmDialog from './components/ConfirmDialog'
 import type { Confirm } from './components/ConfirmDialog'
 import { RateSheet, PaySheet } from './components/FeeSheets'
-import { dateKey, feeFor, monthKey, sessionKey, useAttendance } from './lib/store'
+import { dateKey, feeFor, monthKey, seedJson, sessionKey, useAttendance } from './lib/store'
 import { addPayments, createStudentIn, planAllocation, receiptParts, updateStudentIn } from './lib/payments'
 import { statement } from './lib/accounts'
 import { inr } from './lib/money'
@@ -55,6 +58,15 @@ const NO_BATCH: Batch = { id: '__none', name: 'No batch yet', subject: '', time:
 
 function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeacher: (t: Teacher) => void; onSignOut: () => void }) {
   const { state, saveError, setMark, setLocked, resetMarks, addPayment, voidPayment, addAdjustment, voidAdjustment, addCharge, voidCharge, setFeeRate, setTemplates, setCentre, markSent, addBatch, editBatch, deleteBatch, createStudent, updateStudent, removeStudent, setDefaultFee } = useAttendance(teacher.id)
+  const syncInfo = useSyncInfo()
+  // Every local change reaches the cloud (debounced inside the engine). The first render is the state we
+  // just hydrated, so it is already in sync and is skipped.
+  const hydrated = useRef(true)
+  useEffect(() => { sync.start(teacher.id) }, [teacher.id])
+  useEffect(() => {
+    if (hydrated.current) { hydrated.current = false; return }
+    sync.schedule(state)
+  }, [state])
   const [studentTarget, setStudentTarget] = useState<StudentTarget | null>(null)
   const [batchTarget, setBatchTarget] = useState<BatchTarget | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -464,14 +476,19 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
         defaultFee={state.defaultFee}
         exportJson={() => JSON.stringify(state)}
         onClose={() => setSettingsOpen(false)}
+        sync={syncInfo}
+        onSyncNow={() => { void sync.now() }}
         onSaveProfile={(pf) => ask(
           { title: 'Save settings?', lines: [`Name: ${pf.name}`, `Centre: ${pf.centre || '\u2014'}`, `Default fee for new batches: ${inr(pf.defaultFee)}`], confirmLabel: 'Yes, save' },
-          () => { const t = renameTeacher(teacher.id, pf.name); if (t) onTeacher({ ...t }); setCentre(pf.centre); setDefaultFee(pf.defaultFee); say('Settings saved') },
+          () => {
+            renameTeacher(pf.name).then((t) => onTeacher({ ...t })).catch(() => say('Saved here — your name will sync when you are online'))
+            setCentre(pf.centre); setDefaultFee(pf.defaultFee); say('Settings saved')
+          },
         )}
         onSignOut={onSignOut}
         onDeleteAccount={() => ask(
-          { title: 'Delete your account?', lines: ['All students, batches, attendance and fees for this teacher will be permanently erased from this device.', 'Download a backup first if you may need it.'], confirmLabel: 'Yes, delete everything', danger: true },
-          () => { deleteAccount(teacher.id); onSignOut() },
+          { title: 'Delete your account?', lines: ['Every batch, student, attendance mark and payment in this account will be deleted from the cloud and from this device.', 'There is no way back. Download a backup first if you may need it.'], confirmLabel: 'Yes, delete everything', danger: true },
+          () => { deleteAccount(teacher.id).then(() => onSignOut()).catch((e) => say(e instanceof Error ? e.message : 'Could not delete the account')) },
         )}
         onImport={restore}
         say={say}
@@ -572,12 +589,70 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
   )
 }
 
+function useSyncInfo(): SyncInfo {
+  const [info, setInfo] = useState<SyncInfo>(() => sync.info())
+  useEffect(() => sync.subscribe(setInfo), [])
+  return info
+}
+
+type Phase = 'boot' | 'auth' | 'sync' | 'ready'
+
 export default function App() {
-  const [teacher, setTeacher] = useState<Teacher | null>(() => currentTeacher())
-  if (!teacher) return <Shell><AuthScreen onAuth={setTeacher} /></Shell>
+  // The teacher cached on this device lets the app open instantly from the local backup; the server is
+  // asked in the background and the cloud copy is merged in as soon as it arrives.
+  const cached = useMemo(() => cachedTeacher(), [])
+  const [teacher, setTeacher] = useState<Teacher | null>(cached)
+  const [phase, setPhase] = useState<Phase>(cached ? 'ready' : 'boot')
+  const [note, setNote] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const t = await restoreSession()
+      if (!alive) return
+      if (!t) {
+        clearTeacherCache()
+        setTeacher(null)
+        setNote('Your session ended. Sign in again — everything is still in your account.')
+        setPhase('auth')
+        return
+      }
+      sync.start(t.id)
+      if (!cached) setPhase('sync')
+      // A returning teacher never gets demo students invented for them: only a real cloud/local copy is shown.
+      try { await hydrate(t.id, seedJson(false, '')) } catch { /* no cloud reachable: the local backup keeps the app working */ }
+      if (!alive) return
+      setTeacher(t)
+      setPhase('ready')
+    })()
+    return () => { alive = false }
+  }, [cached])
+
+  const onAuth = (t: Teacher, seedJson?: string) => {
+    setPhase('sync')
+    void (async () => {
+      sync.start(t.id)
+      try { await hydrate(t.id, seedJson) } catch { /* offline: the local backup is enough to start */ }
+      setTeacher(t)
+      setPhase('ready')
+    })()
+  }
+
+  if (phase === 'boot') return <Shell><SyncGate label="Opening Coaching Sathi" /></Shell>
+  if (phase === 'sync') return <Shell><SyncGate label="Syncing your coaching data" /></Shell>
+  if (!teacher || phase === 'auth') return <Shell><AuthScreen onAuth={onAuth} note={note} /></Shell>
   return (
     <Shell>
-      <Workspace key={teacher.id} teacher={teacher} onTeacher={setTeacher} onSignOut={() => { signOut(); setTeacher(null) }} />
+      <Workspace
+        key={teacher.id}
+        teacher={teacher}
+        onTeacher={setTeacher}
+        onSignOut={() => {
+          void sync.now().finally(() => {
+            void signOut().finally(() => { sync.reset(); setTeacher(null); setNote('Signed out. Your data is safe in the cloud.'); setPhase('auth') })
+          })
+        }}
+      />
     </Shell>
   )
 }

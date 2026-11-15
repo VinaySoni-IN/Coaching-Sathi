@@ -142,6 +142,7 @@ describe('Whole flow in the real app (E2E)', () => {
     mut?.(st)
     localStorage.setItem('coachdesk:accounts', JSON.stringify([{ id: 't1', name: 'Priya', email: 'p@example.com', salt: '', hash: '', createdAt: 0 }]))
     localStorage.setItem('coachdesk:session', JSON.stringify({ id: 't1', at: Date.now() }))
+    localStorage.setItem('coachdesk:teacher', JSON.stringify({ id: 't1', name: 'Priya Sharma', email: 'priya@example.com' }))
     localStorage.setItem(KEY, JSON.stringify(rebuild(st)))
   }
 
