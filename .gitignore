@@ -27,3 +27,6 @@ dist-ssr
 # local preview uploads / artifacts
 uploads
 .vite-source-tags.js
+
+# local design previews
+icons-preview.png
