@@ -75,32 +75,28 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 
 ## Branding & app icons
 
-Two things are kept deliberately separate:
+The neon Coaching Sathi artwork — cap, books, magnifier and wordmark inside a glowing violet
+frame — is used **only where the OS draws the icon**. Inside the app the sign-in card keeps its
+original `GraduationCap` glyph, and no brand image is rendered in the UI.
 
-- **Outside (launcher icon, favicon):** the neon Coaching Sathi artwork — graduated cap, books,
-  magnifier, wordmark inside a glowing violet frame.
-- **Inside (in-app UI):** the original `GraduationCap` glyph on the sign-in card. The app's own
-  chrome is unchanged; the brand artwork is used only where the OS draws the icon.
+**Rounded, transparent corners.** The artwork is already a rounded neon tile on transparency, so the
+build keeps that alpha channel instead of flattening it onto a black square: `icon-192` / `icon-512`
+and the favicons have real transparency outside the tile's own curve. Only the two surfaces that
+cannot take transparency stay opaque:
 
-**Crop.** The source is a 1254² render on a transparent canvas. The set crops to the neon tile itself
-(brightness bounding box, +2 % so the glow is not clipped), then centres it on black so every platform
-gets an opaque, full-bleed tile.
-
-**Enhance.** 2× Lanczos upscale, unsharp mask (radius 2.4 / 95 %), contrast +6 %, saturation +10 %,
-brightness +2 %, plus a light sharpen after the final downscale — the neon rims stay crisp instead of
-blooming at 192 px.
-
-| File | Size | Used for |
+| File | Corners | Why |
 | --- | --- | --- |
-| `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` |
-| `icon-maskable-512.png` | 512² | `purpose: maskable` — art inset to 82 % so a circular launcher crop never clips the frame |
-| `apple-touch-icon.png` | 180² | iOS home screen, opaque, full-bleed |
-| `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers, squircle corners |
-| `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, shortcuts |
+| `icon-192.png` / `icon-512.png` | **rounded, transparent** | manifest `purpose: any` |
+| `favicon.svg` / `favicon.ico` | **rounded, transparent** | browsers render the alpha as-is |
+| `icon-maskable-512.png` | opaque, art inset to 82 % | Android crops it to its own shape; transparency would be padded to black anyway |
+| `apple-touch-icon.png` | opaque, square | iOS composites alpha onto **black** and applies its own mask — a pre-rounded tile would show black wedges at the corners |
 
-- The favicon uses the **emblem only** (cap + books + magnifier): the wordmark is unreadable at 16–48 px.
-- Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio.
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v8`) so
+**Crop + enhance.** Cropped to the tile's alpha bounds (1030², glow included), enhanced at 2× with
+Lanczos, unsharp mask (2.4 / 95 %), contrast +6 %, saturation +10 %, brightness +2 %, and a light
+sharpen after the final downscale. The RGB channels are enhanced while the alpha is resampled
+separately, so edges stay clean.
+
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v9`) so
   installed copies refresh.
 
 ## Deploying to Vercel
