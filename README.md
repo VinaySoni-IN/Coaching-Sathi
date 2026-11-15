@@ -75,30 +75,32 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 
 ## Branding & app icons
 
-The mark is the **premium 3D artwork** (graduation cap, books, magnifier, wordmark) prepared for
-launcher use rather than dropped in as-is.
+Two things are kept deliberately separate:
 
-**Crop.** The source is a 1254² render with a soft card and empty margin around the art. The icon set
-crops to the ink itself (brightness bounding box, +3.5 % breathing room) instead of the card, so the
-logo fills the tile edge to edge — on a home screen the difference is roughly 15 % more logo for the
-same icon size.
+- **Outside (launcher icon, favicon):** the neon Coaching Sathi artwork — graduated cap, books,
+  magnifier, wordmark inside a glowing violet frame.
+- **Inside (in-app UI):** the original `GraduationCap` glyph on the sign-in card. The app's own
+  chrome is unchanged; the brand artwork is used only where the OS draws the icon.
 
-**Enhance.** Upscaled 2× with Lanczos, unsharp-masked (radius 2.4 / 95 %), then contrast +6 %,
-saturation +10 %, brightness +2 %, and a light sharpening pass after the final downscale. This puts
-detail back that the original downscale lost and stops the purple glow going muddy at 192 px.
+**Crop.** The source is a 1254² render on a transparent canvas. The set crops to the neon tile itself
+(brightness bounding box, +2 % so the glow is not clipped), then centres it on black so every platform
+gets an opaque, full-bleed tile.
+
+**Enhance.** 2× Lanczos upscale, unsharp mask (radius 2.4 / 95 %), contrast +6 %, saturation +10 %,
+brightness +2 %, plus a light sharpen after the final downscale — the neon rims stay crisp instead of
+blooming at 192 px.
 
 | File | Size | Used for |
 | --- | --- | --- |
 | `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` |
-| `icon-maskable-512.png` | 512² | `purpose: maskable` — art inset to 82 % so a circular launcher crop never clips it |
+| `icon-maskable-512.png` | 512² | `purpose: maskable` — art inset to 82 % so a circular launcher crop never clips the frame |
 | `apple-touch-icon.png` | 180² | iOS home screen, opaque, full-bleed |
-| `logo-256.png` | 256² | in-app brand mark (sign-in screen), rounded + transparent |
 | `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers, squircle corners |
 | `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, shortcuts |
 
 - The favicon uses the **emblem only** (cap + books + magnifier): the wordmark is unreadable at 16–48 px.
 - Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio.
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v7`) so
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v8`) so
   installed copies refresh.
 
 ## Deploying to Vercel
