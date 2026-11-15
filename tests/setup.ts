@@ -4,3 +4,10 @@ if (typeof Element !== 'undefined') {
   // @ts-expect-error test-only shim
   delete Element.prototype.animate
 }
+
+// Every test talks to an in-memory Supabase stand-in instead of a live project.
+import { beforeEach } from 'vitest'
+import { installFakeCloud, resetFakeCloud } from './fakeCloud'
+
+installFakeCloud()
+beforeEach(() => { resetFakeCloud() })

@@ -3,7 +3,8 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import AuthScreen from '../src/components/AuthScreen'
 import { StatusList } from '../src/components/Lists'
 import { canonicalEmail, checkEmail, isDisposableDomain, POPULAR_PROVIDERS } from '../src/lib/email'
-import { signIn, signUp, listTeachers } from '../src/lib/auth'
+import { cachedTeacher, signIn, signUp } from '../src/lib/auth'
+import { seedFakeUser } from './fakeCloud'
 import { stu } from './helpers'
 
 beforeEach(() => { localStorage.clear() })
@@ -77,7 +78,6 @@ describe('One mailbox = one account (EC)', () => {
     await expect(signUp('Priya 2', 'priyasharma+x@gmail.com', 'secret1', '{}')).rejects.toThrow(/already exists/)
     await expect(signUp('Priya 3', 'PRIYA.SHARMA@googlemail.com', 'secret1', '{}')).rejects.toThrow(/already exists/)
     await expect(signUp('Ravi', 'ravi@gmail.com', 'secret1', '{}')).resolves.toBeTruthy()
-    expect(listTeachers()).toHaveLength(2)
   })
 })
 
@@ -86,7 +86,7 @@ describe('Sign-up and sign-in enforcement (EA)', () => {
     for (const [e, re] of [['x@mailinator.com', /Temporary/], ['x@example.com', /real email/], ['x@gmial.com', /Did you mean x@gmail.com/], ['nope', /valid email/], ['', /Enter your email/]] as const) {
       await expect(signUp('T', e, 'secret1', '{}'), e).rejects.toThrow(re)
     }
-    expect(listTeachers()).toHaveLength(0); expect(localStorage.getItem('coachdesk:session')).toBeNull()
+    expect(cachedTeacher()).toBeNull()
   })
   it('EA-02 the email is stored trimmed and lower-case', async () => {
     const t = await signUp('T', '  Teacher@Gmail.COM ', 'secret1', '{}')
@@ -94,10 +94,9 @@ describe('Sign-up and sign-in enforcement (EA)', () => {
     await expect(signIn('TEACHER@gmail.com ', 'secret1')).resolves.toBeTruthy()
   })
   it('EA-03 existing accounts are never locked out: an older account on a now-rejected domain can still sign in', async () => {
-    const { signUp: su } = await import('../src/lib/auth')
-    void su
-    localStorage.setItem('coachdesk:accounts', JSON.stringify([{ id: 't9', name: 'Old', email: 'old@example.com', salt: 'ab', hash: '', createdAt: 0 }]))
+    seedFakeUser('old@example.com', 'secret1', 'Old Teacher')
     await expect(signIn('old@example.com', 'whatever')).rejects.toThrow(/incorrect/)   // fails only on the password, not on the email rules
+    await expect(signIn('old@example.com', 'secret1')).resolves.toMatchObject({ email: 'old@example.com' })
     expect(bad('old@example.com')).not.toBeNull()                                       // ...even though new sign-ups with it are refused
   })
 })
@@ -116,7 +115,7 @@ describe('Sign-up screen (UI)', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } })
     fireEvent.click(screen.getByRole('button', { name: /Create account/ }))
     await waitFor(() => expect(screen.getAllByRole('alert').length).toBeGreaterThan(0))
-    expect(listTeachers()).toHaveLength(0)
+    expect(cachedTeacher()).toBeNull()
   })
   it('UI-02 a typo suggests the fix; a good Gmail clears the message and signs up', async () => {
     const onAuth = vi.fn()
@@ -130,7 +129,7 @@ describe('Sign-up screen (UI)', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } })
     fireEvent.click(screen.getByRole('button', { name: /Create account/ }))
     await waitFor(() => expect(onAuth).toHaveBeenCalled())
-    expect(listTeachers()[0].email).toBe('riya@gmail.com')
+    expect(cachedTeacher()?.email).toBe('riya@gmail.com')
   })
   it('UI-03 a half-typed address is not nagged until the field is left (format errors wait for blur)', () => {
     render(<AuthScreen onAuth={vi.fn()} />)
