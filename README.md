@@ -75,31 +75,31 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 
 ## Branding & app icons
 
-**Matte black + gold royal lockup.** A three-point gold crown above the wordmark set in Cinzel
-(a Trajan-style Roman capital face), on a matte black tile with a twin gold hairline frame. The
-`COACHING / SATHI` lockup is used wherever the icon is big enough to read it; the crown alone carries
-the small sizes.
+The mark is the **premium 3D artwork** (graduation cap, books, magnifier, wordmark) prepared for
+launcher use rather than dropped in as-is.
+
+**Crop.** The source is a 1254² render with a soft card and empty margin around the art. The icon set
+crops to the ink itself (brightness bounding box, +3.5 % breathing room) instead of the card, so the
+logo fills the tile edge to edge — on a home screen the difference is roughly 15 % more logo for the
+same icon size.
+
+**Enhance.** Upscaled 2× with Lanczos, unsharp-masked (radius 2.4 / 95 %), then contrast +6 %,
+saturation +10 %, brightness +2 %, and a light sharpening pass after the final downscale. This puts
+detail back that the original downscale lost and stops the purple glow going muddy at 192 px.
 
 | File | Size | Used for |
 | --- | --- | --- |
-| `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` — Android home screen, desktop install, task switcher |
-| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — the frame is dropped and the lockup scaled to 84 %, because a circular launcher crop would cut the frame's corners |
-| `apple-touch-icon.png` | 180² | iOS home screen. Opaque and full-bleed — iOS applies its own rounded-corner mask |
-| `logo-256.png` | 256² | in-app brand mark (sign-in screen). Rounded corners, transparent outside |
-| `favicon.svg` | **real vector**, crown only | modern browsers — no embedded bitmap, sharp at 16 px |
-| `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, Windows shortcuts |
+| `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` |
+| `icon-maskable-512.png` | 512² | `purpose: maskable` — art inset to 82 % so a circular launcher crop never clips it |
+| `apple-touch-icon.png` | 180² | iOS home screen, opaque, full-bleed |
+| `logo-256.png` | 256² | in-app brand mark (sign-in screen), rounded + transparent |
+| `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers, squircle corners |
+| `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, shortcuts |
 
-Design notes:
-
-- Palette: matte black `#15151a → #050506` with a gold ramp `#FBEFC4 → #D4AF37 → #9C7524`. The gold
-  hairline frame is what keeps the tile from disappearing on a dark home screen.
-- **Two lockups on purpose:** the wordmark is unreadable below ~120 px of icon, so the favicon and
-  any sub-192 px use is the crown alone — same colour, same silhouette family.
-- `favicon.svg` contains no `<text>` and no font, so it renders identically in every browser without
-  a webfont request.
+- The favicon uses the **emblem only** (cap + books + magnifier): the wordmark is unreadable at 16–48 px.
 - Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio.
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v6`) so
-  already-installed copies pick up the new cache.
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v7`) so
+  installed copies refresh.
 
 ## Deploying to Vercel
 
