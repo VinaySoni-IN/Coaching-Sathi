@@ -75,27 +75,27 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 
 ## Branding & app icons
 
-The icon set is derived from the master artwork (`1254 × 1254`, dark card with the graduation cap,
-books and magnifier) and lives in `public/`:
+The mark is a **vector emblem drawn for this app** — a white mortarboard over three ascending bars on a
+violet gradient tile. It is authored as SVG (`public/favicon.svg` is the source of truth) and rendered
+to PNG at every size the platforms ask for, so it stays crisp and tiny (the whole set is ~340 KB).
 
 | File | Size | Used for |
 | --- | --- | --- |
 | `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` — Android home screen, desktop install, task switcher |
-| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — Android adaptive icons. Artwork is inset to 70 % so nothing important is lost when the launcher crops it to a circle/squircle |
+| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — Android adaptive icons. The emblem is scaled to 88 % so a circular/squircle launcher crop never clips it |
 | `apple-touch-icon.png` | 180² | iOS home screen. Opaque and full-bleed — iOS applies its own rounded-corner mask |
 | `logo-256.png` | 256² | in-app brand mark (sign-in screen). Rounded corners, transparent outside |
-| `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers. Rounded tile (14.3/64 ≈ 22.4 % corner radius), transparent outside the curve |
+| `favicon.svg` | **real vector**, 64 px rendered size | modern browsers — sharp at 16 px, unlike a raster favicon |
 | `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, Windows shortcuts |
 
 Design notes:
 
-- Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio — drawn at 4× and
-  downsampled for clean edges.
-- The favicon uses the **emblem only** (cap + books + magnifier), because the wordmark is unreadable
-  below ~48 px.
-- The artwork's background is pure black and the graduation cap is pure black too, so the icons keep
-  an opaque black tile (required by iOS anyway) and use transparency only outside the rounded curve.
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v4`) so
+- Palette: violet `#7c4dff` → `#48178f` tile with a white emblem, so it reads on a dark *or* light
+  home screen and stays legible at 16 px (the app's near-black UI would swallow a dark icon).
+- The favicon is a **simplified** variant of the same mark: same geometry, 12 % larger, no glow or
+  drop shadow, so 16 px stays clean instead of muddy.
+- Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio.
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v5`) so
   already-installed copies pick up the new cache.
 
 ## Deploying to Vercel
