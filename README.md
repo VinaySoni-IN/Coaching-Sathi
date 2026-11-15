@@ -3,6 +3,8 @@
 An offline-first, installable PWA for small coaching centres in India: swipe to mark attendance,
 track monthly fees, take payments, send WhatsApp messages to parents, and export reports to Excel.
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FVinaySoni-IN%2FCoaching-Sathi&framework=vite)
+
 Everything is stored on the device (`localStorage`) — no server, no accounts backend, no data leaves
 the phone unless the teacher exports or shares it.
 
@@ -25,8 +27,7 @@ the phone unless the teacher exports or shares it.
   PBKDF2-SHA256 (120k iterations) in the browser and data is namespaced per teacher id
   (`src/lib/auth.ts`). This is device-local convenience, not a security boundary against someone
   with access to the unlocked device.
-- **Installable PWA** — manifest, maskable icons, service worker and GitHub Pages deployment
-  (`public/`, `.github/workflows/deploy.yml`).
+- **Installable PWA** — manifest, maskable icons and service worker (`public/`).
 
 ## Getting started
 
@@ -68,16 +69,38 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 - Storage keys are prefixed `coachdesk:` — accounts, session, and one data blob per teacher.
 - `xlsx` is installed from the npm registry (`^0.18.5`) rather than the SheetJS CDN tarball so
   `npm ci` works in environments that can't reach `cdn.sheetjs.com`.
-- Deployment targets GitHub Pages: pushing to `main` runs lint + tests, builds, and publishes `dist/`.
-  All asset URLs are relative (`base: './'`) and the service worker caches with relative paths, so the
-  app works from the project sub-path (`https://<user>.github.io/Coaching-Sathi/`) without changes.
-  `dist/index.html` is also copied to `dist/404.html` so unknown paths fall back to the shell.
+- All asset URLs are relative (`base: './'`) and the service worker caches with relative paths, so the
+  build works from a domain root *or* a sub-path without changes.
+- CI (`.github/workflows/ci.yml`) runs lint + tests + build on every push to `main` and every PR.
 
-## Deploying
+## Deploying to Vercel
 
-1. In **Settings → Pages**, set *Source* to **GitHub Actions**.
-2. Push to `main` (or run the *Deploy to GitHub Pages* workflow manually).
-3. The site is published at `https://<user>.github.io/Coaching-Sathi/`.
+`vercel.json` pins everything Vercel needs, so the import needs no manual settings:
+
+| Setting | Value |
+| --- | --- |
+| Framework preset | Vite (auto-detected) |
+| Install command | `npm ci` |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Rewrites | all non-`/assets/` paths → `/index.html` (SPA fallback) |
+| Headers | `sw.js` and the manifest are revalidated on every load; `/assets/*` is cached immutably; `nosniff` + `no-referrer` + a restrictive permissions policy |
+
+**Option A — dashboard:** [vercel.com/new](https://vercel.com/new) → *Import Git Repository* →
+`VinaySoni-IN/Coaching-Sathi` → **Deploy**. The defaults from `vercel.json` are applied automatically;
+every later push to `main` redeploys, and each PR gets its own preview URL.
+
+**Option B — CLI:**
+
+```bash
+npm i -g vercel
+vercel link            # choose VinaySoni-IN/Coaching-Sathi
+vercel                 # preview deployment
+vercel --prod          # production deployment
+```
+
+After the first deploy, open the site once and then reload: the service worker installs on the second
+visit and the app works offline from then on.
 
 Files that are intentionally **not** in the repo: `uploads/` (scratch images from the archive, unused
 by the app), `dist/` (build output) and `.vite-source-tags.js` (local editor tooling).
