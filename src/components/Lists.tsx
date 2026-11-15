@@ -68,8 +68,8 @@ function MsgButton({ s, onMessage, tone, wide = false }: { s: Student; onMessage
   const reachable = !!(normalizePhone(s.phone) || normalizePhone(s.parentPhone ?? ''))
   return (
     <button type="button" onClick={() => onMessage(s)} data-tone={tone} data-msg-open data-reachable={reachable} aria-label={`Message ${s.name} on WhatsApp`} style={tone === 'green' ? WHO.student.style : WHO.parent.style}
-      className={`glass-btn relative z-10 grid shrink-0 place-items-center rounded-full ${wide ? 'h-9 w-11' : 'h-10 w-10'}`}>
-      <MessageCircle size={wide ? 16 : 18} strokeWidth={2.4} />
+      className={`glass-btn relative z-10 grid shrink-0 place-items-center rounded-full ${wide ? 'h-8 w-8' : 'h-10 w-10'}`}>
+      <MessageCircle size={wide ? 14 : 18} strokeWidth={2.4} />
     </button>
   )
 }
@@ -85,7 +85,7 @@ export function StatusList({ students, status, layout, locked, onSet, onLockedTa
   }
 
   return (
-    <ul className={layout === 'grid' ? 'grid grid-cols-2 gap-3' : 'flex flex-col gap-2.5'}>
+    <ul className={layout === 'grid' ? 'grid grid-cols-1 gap-2.5 min-[360px]:grid-cols-2 min-[360px]:gap-3' : 'flex flex-col gap-2.5'}>
       <AnimatePresence mode="popLayout">
         {students.map((s, i) =>
           layout === 'grid' ? (
@@ -96,15 +96,15 @@ export function StatusList({ students, status, layout, locked, onSet, onLockedTa
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               transition={{ delay: Math.min(i * 0.02, 0.16), duration: 0.18 }}
-              className="glass flex flex-col items-center rounded-[28px] px-3 pb-3 pt-4 text-center"
+              className="glass flex flex-col items-center rounded-[28px] px-2 pb-3 pt-4 text-center"
             >
               <Avatar student={s} size={64} />
               <p className="relative z-10 mt-2.5 w-full truncate text-[14.5px] font-semibold">{s.name}</p>
               <p className="relative z-10 text-[11.5px] text-white/65">Roll {s.roll}</p>
               <div className="relative z-10 mt-3 flex w-full items-center gap-1.5">
-                <button onClick={() => move(s)} className={`glass glass-btn relative z-10 flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full text-[12.5px] font-medium ${locked ? 'text-white/65' : 'text-white/85'}`}>
-                  {locked ? <Lock size={13} /> : <ArrowRightLeft size={13} />}
-                  {locked ? 'Locked' : isP ? 'Mark absent' : 'Mark present'}
+                <button onClick={() => move(s)} className={`glass glass-btn relative z-10 flex h-9 min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-1.5 text-[11px] font-medium min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[12.5px] ${locked ? 'text-white/65' : 'text-white/85'}`}>
+                  {locked ? <Lock size={12} className="shrink-0" /> : <ArrowRightLeft size={12} className="shrink-0" />}
+                  <span className="truncate">{locked ? 'Locked' : isP ? 'Mark absent' : 'Mark present'}</span>
                 </button>
                 <MsgButton s={s} onMessage={onMessage} tone={isP ? 'green' : 'red'} wide />
               </div>
