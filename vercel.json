@@ -60,7 +60,7 @@
       ]
     },
     {
-      "source": "/(icon-192-v10.png|icon-512-v10.png|icon-maskable-512-v10.png|apple-touch-icon-v10.png|favicon-v10.svg|favicon-v10.ico)",
+      "source": "/(icon-192-v10.png|icon-512-v10.png|icon-maskable-512-v10.png|apple-touch-icon-v10.png|favicon-v11.ico|favicon-32-v11.png|favicon-128-v11.png)",
       "headers": [
         {
           "key": "Cache-Control",

@@ -86,10 +86,25 @@ cannot take transparency stay opaque:
 
 | File | Corners | Why |
 | --- | --- | --- |
-| `icon-192.png` / `icon-512.png` | **rounded, transparent** | manifest `purpose: any` |
-| `favicon.svg` / `favicon.ico` | **rounded, transparent** | browsers render the alpha as-is |
-| `icon-maskable-512.png` | opaque, art inset to 82 % | Android crops it to its own shape; transparency would be padded to black anyway |
-| `apple-touch-icon.png` | opaque, square | iOS composites alpha onto **black** and applies its own mask — a pre-rounded tile would show black wedges at the corners |
+| `icon-192-v10.png` / `icon-512-v10.png` | **rounded, transparent** | manifest `purpose: any` |
+| `icon-maskable-512-v10.png` | opaque, art inset to 82 % | Android crops it to its own shape; transparency would be padded to black anyway |
+| `apple-touch-icon-v10.png` | opaque, square | iOS composites alpha onto **black** and applies its own mask — a pre-rounded tile would show black wedges at the corners |
+
+### Browser tab icon is a different mark
+
+The **home-screen / installed-app icon** is the neon "CS + graduation cap" tile above, and it is
+declared only in `manifest.webmanifest` (+ the `apple-touch-icon` link). The **browser tab icon**
+is deliberately the glossy `CS Education Emblem` artwork instead:
+
+| File | Sizes | Used by |
+| --- | --- | --- |
+| `favicon-32-v11.png` | 32² | Chrome / Edge / Firefox tabs |
+| `favicon-128-v11.png` | 128² | hi-DPI tabs, Safari bookmarks |
+| `favicon-v11.ico` | 16² / 32² / 48² | legacy fallback, Windows shortcuts |
+
+They are cropped to the artwork's bounds (+8 % breathing room), composited on the emblem's own
+black, and rounded (radius 15.5 % of the side) with transparent corners. Re-running the build is a
+matter of editing `/tmp/fav/build.py`; the manifest icons are not touched by favicon changes.
 
 **Crop + enhance.** Cropped to the tile's alpha bounds (1030², glow included), enhanced at 2× with
 Lanczos, unsharp mask (2.4 / 95 %), contrast +6 %, saturation +10 %, brightness +2 %, and a light
@@ -100,7 +115,7 @@ separately, so edges stay clean.
   rules keep icon bytes for up to a year, so re-uploading different pixels to the *same* URL is
   invisible to anyone who has visited before — even after uninstalling the PWA. Bumping the suffix
   gives every release brand-new URLs, which is why those files can be cached `immutable`.
-  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v10`).
+  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v11`).
 
 ## Deploying to Vercel
 
