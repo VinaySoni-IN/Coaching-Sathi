@@ -1,5 +1,5 @@
 {
-  "name": "Coaching Sathi — Attendance Manager",
+  "name": "Coaching Sathi \u2014 Attendance Manager",
   "short_name": "Coaching Sathi",
   "description": "Swipe-to-mark attendance for coaching centres. Swipe left for present, right for absent.",
   "id": "./",
@@ -9,10 +9,28 @@
   "orientation": "portrait",
   "background_color": "#0b0b0c",
   "theme_color": "#0b0b0c",
-  "categories": ["education", "productivity"],
+  "categories": [
+    "education",
+    "productivity"
+  ],
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

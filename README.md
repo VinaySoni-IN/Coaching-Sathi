@@ -59,7 +59,7 @@ src/
     wa.ts            WhatsApp templates and link building
     auth.ts          local teacher accounts and sessions
     money.ts, phone.ts, email.ts, backup.ts, photo.ts, …
-public/              manifest, icons, service worker
+public/              manifest, app icons + favicon, service worker
 tests/               Vitest suites (unit + component + E2E-style flows)
 ```
 
@@ -72,6 +72,31 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 - All asset URLs are relative (`base: './'`) and the service worker caches with relative paths, so the
   build works from a domain root *or* a sub-path without changes.
 - CI (`.github/workflows/ci.yml`) runs lint + tests + build on every push to `main` and every PR.
+
+## Branding & app icons
+
+The icon set is derived from the master artwork (`1254 × 1254`, dark card with the graduation cap,
+books and magnifier) and lives in `public/`:
+
+| File | Size | Used for |
+| --- | --- | --- |
+| `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` — Android home screen, desktop install, task switcher |
+| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — Android adaptive icons. Artwork is inset to 70 % so nothing important is lost when the launcher crops it to a circle/squircle |
+| `apple-touch-icon.png` | 180² | iOS home screen. Opaque and full-bleed — iOS applies its own rounded-corner mask |
+| `logo-256.png` | 256² | in-app brand mark (sign-in screen). Rounded corners, transparent outside |
+| `favicon.svg` | vector wrapper, 128 px raster inside | modern browsers. Rounded tile (14.3/64 ≈ 22.4 % corner radius), transparent outside the curve |
+| `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, Windows shortcuts |
+
+Design notes:
+
+- Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio — drawn at 4× and
+  downsampled for clean edges.
+- The favicon uses the **emblem only** (cap + books + magnifier), because the wordmark is unreadable
+  below ~48 px.
+- The artwork's background is pure black and the graduation cap is pure black too, so the icons keep
+  an opaque black tile (required by iOS anyway) and use transparency only outside the rounded curve.
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v4`) so
+  already-installed copies pick up the new cache.
 
 ## Deploying to Vercel
 
