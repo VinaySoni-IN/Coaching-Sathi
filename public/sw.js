@@ -1,6 +1,6 @@
 /* Coaching Sathi service worker — offline-first app shell, works under any GitHub Pages sub-path */
-const VERSION = 'coachsathi-v11' // new cache name: installed apps pick up the new name and old caches are cleared
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192-v10.png', './icon-512-v10.png', './icon-maskable-512-v10.png', './apple-touch-icon-v10.png', './favicon-32-v11.png', './favicon-v11.ico']
+const VERSION = 'coachsathi-v12' // new cache name: installed apps pick up the new name and old caches are cleared
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192-v10.png', './icon-512-v10.png', './icon-maskable-512-v10.png', './apple-touch-icon-v10.png', './favicon-anim-32-v12.png', './favicon-128-v12.png', './favicon-v12.ico']
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()))
