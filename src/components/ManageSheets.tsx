@@ -10,6 +10,8 @@ import type { PhoneVal } from '../lib/phone'
 import { monthKey, newId, nextRoll, rollOwner } from '../lib/store'
 import { MONTHS, addMonths, courseConflict, inr, spanLabel } from '../lib/report'
 import { paiseToInput, rupeeInput, toPaise } from '../lib/money'
+import TimeField from './TimeField'
+import { DEFAULT_CLOCK, formatClock } from '../lib/clock'
 import type { Batch, BatchInput, Student } from '../lib/store'
 
 const field = 'w-full rounded-2xl border border-white/15 bg-white/8 px-4 py-3.5 text-[16px] outline-none placeholder:text-white/35 focus:border-white/45'
@@ -288,18 +290,14 @@ export function BatchForm({ target, defaultFee, currentFee, paidMonths, onClose,
   const valid = !!name.trim() && f > 0 && m <= 60 && (m === 0 || !!start) && !conflict
   return (
     <Shell open={!!target} onClose={onClose} title={isNew ? 'New batch' : 'Edit batch'} sub={isNew ? 'Create a class group' : target?.batch?.name ?? ''}
-      onSubmit={() => { if (target && valid) onSave(target, { name: name.trim(), subject: subject.trim() || 'General', time: time.trim() || '\u2014', fee: f, months: m, start }) }}>
+      onSubmit={() => { if (target && valid) onSave(target, { name: name.trim(), subject: subject.trim() || 'General', time: time.trim() || formatClock(DEFAULT_CLOCK), fee: f, months: m, start }) }}>
       <label htmlFor="bf-name" className={lbl}>Batch name</label>
       <input id="bf-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Class 9 Maths" className={`${field} mb-4`} />
-      <div className="mb-4 grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="bf-sub" className={lbl}>Subject</label>
-          <input id="bf-sub" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Mathematics" className={field} />
-        </div>
-        <div>
-          <label htmlFor="bf-time" className={lbl}>Class time</label>
-          <input id="bf-time" value={time} onChange={(e) => setTime(e.target.value)} placeholder="5:00 PM" className={field} />
-        </div>
+      <label htmlFor="bf-sub" className={lbl}>Subject</label>
+      <input id="bf-sub" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Mathematics" className={`${field} mb-4`} />
+      <label htmlFor="bf-time" className={lbl}>Class time</label>
+      <div className="mb-4">
+        <TimeField value={time} onChange={setTime} />
       </div>
       <label htmlFor="bf-fee" className={lbl}>Monthly fee per student</label>
       <div className="mb-4 flex items-center rounded-2xl border border-white/15 bg-white/8 px-4 focus-within:border-white/45">
