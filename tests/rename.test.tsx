@@ -28,7 +28,7 @@ describe('App renamed to "Coaching Sathi" (RN)', () => {
     expect(m.id).toBe('./'); expect(m.start_url).toBe('./'); expect(m.scope).toBe('./')
   })
   it('RN-03 the service worker uses a new cache name so installed copies refresh to the new name', () => {
-    expect(read('public/sw.js')).toMatch(/const VERSION = 'coachsathi-v9'/)
+    expect(read('public/sw.js')).toMatch(/const VERSION = 'coachsathi-v10'/)
   })
   it('RN-04 no user-facing "Coaching Desk" is left in the app (only the internal upgrade constant and storage keys)', () => {
     for (const f of ['index.html', 'public/manifest.webmanifest', 'public/sw.js', 'src/components/AuthScreen.tsx', 'src/components/SettingsSheet.tsx', 'src/components/ReportSheet.tsx', 'src/components/InvoiceSheet.tsx', 'src/lib/report.ts', 'src/lib/backup.ts']) {
