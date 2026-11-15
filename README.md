@@ -96,8 +96,11 @@ Lanczos, unsharp mask (2.4 / 95 %), contrast +6 %, saturation +10 %, brightness 
 sharpen after the final downscale. The RGB channels are enhanced while the alpha is resampled
 separately, so edges stay clean.
 
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v9`) so
-  installed copies refresh.
+- **Icon file names are versioned** (`icon-192-v10.png`, …). Browsers and the `vercel.json` cache
+  rules keep icon bytes for up to a year, so re-uploading different pixels to the *same* URL is
+  invisible to anyone who has visited before — even after uninstalling the PWA. Bumping the suffix
+  gives every release brand-new URLs, which is why those files can be cached `immutable`.
+  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v10`).
 
 ## Deploying to Vercel
 
