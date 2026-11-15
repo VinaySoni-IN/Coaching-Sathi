@@ -95,15 +95,15 @@ cannot take transparency stay opaque:
 The **home-screen / installed-app icon** is the neon "CS + graduation cap" tile and is declared
 only in `manifest.webmanifest` (+ the `apple-touch-icon` link). It is never touched by favicon work.
 
-The **browser tab icon** is the glossy *CS Education Emblem*, cut out of its pure-black background
+The **browser tab icon** is the glossy *purple CS graduation emblem* (`Glossy Purple CS Graduation Emblem.png`), cut out of its pure-black background
 so it floats as a transparent sticker — no tile, no rounded app-icon frame:
 
 | File | Sizes | Notes |
 | --- | --- | --- |
-| `favicon-anim-32-v12.png` | 32² | APNG, 16 frames, 2.2 s neon pulse, ~41 KB |
-| `favicon-anim-64-v12.png` | 64² | same cycle for hi-DPI tabs |
-| `favicon-128-v12.png` | 128² | static, bookmarks / pinned tabs |
-| `favicon-v12.ico` | 16²/32²/48² | static fallback, Windows shortcuts |
+| `favicon-anim-32-v13.png` | 32² | APNG, 16 frames, 2.2 s neon pulse, ~41 KB |
+| `favicon-anim-64-v13.png` | 64² | same cycle for hi-DPI tabs |
+| `favicon-128-v13.png` | 128² | static, bookmarks / pinned tabs |
+| `favicon-v13.ico` | 16²/32²/48² | static fallback, Windows shortcuts |
 
 Chrome, Edge and Firefox animate the APNG in the tab; Safari paints frame 0, which is authored at
 peak brightness so a non-animating browser still gets the vivid mark. The cut-out is a border flood
@@ -115,7 +115,7 @@ feather, then 2 % breathing room and a 4× Lanczos downscale with a light unshar
   rules keep icon bytes for up to a year, so re-uploading different pixels to the *same* URL is
   invisible to anyone who has visited before — even after uninstalling the PWA. Bumping the suffix
   gives every release brand-new URLs, which is why those files can be cached `immutable`.
-  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v12`).
+  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v13`).
 
 ## Deploying to Vercel
 
