@@ -75,27 +75,30 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 
 ## Branding & app icons
 
-The mark is a **vector emblem drawn for this app** — a white mortarboard over three ascending bars on a
-violet gradient tile. It is authored as SVG (`public/favicon.svg` is the source of truth) and rendered
-to PNG at every size the platforms ask for, so it stays crisp and tiny (the whole set is ~340 KB).
+**Matte black + gold royal lockup.** A three-point gold crown above the wordmark set in Cinzel
+(a Trajan-style Roman capital face), on a matte black tile with a twin gold hairline frame. The
+`COACHING / SATHI` lockup is used wherever the icon is big enough to read it; the crown alone carries
+the small sizes.
 
 | File | Size | Used for |
 | --- | --- | --- |
 | `icon-192.png` / `icon-512.png` | 192², 512² | manifest `purpose: any` — Android home screen, desktop install, task switcher |
-| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — Android adaptive icons. The emblem is scaled to 88 % so a circular/squircle launcher crop never clips it |
+| `icon-maskable-512.png` | 512² | manifest `purpose: maskable` — the frame is dropped and the lockup scaled to 84 %, because a circular launcher crop would cut the frame's corners |
 | `apple-touch-icon.png` | 180² | iOS home screen. Opaque and full-bleed — iOS applies its own rounded-corner mask |
 | `logo-256.png` | 256² | in-app brand mark (sign-in screen). Rounded corners, transparent outside |
-| `favicon.svg` | **real vector**, 64 px rendered size | modern browsers — sharp at 16 px, unlike a raster favicon |
+| `favicon.svg` | **real vector**, crown only | modern browsers — no embedded bitmap, sharp at 16 px |
 | `favicon.ico` | 16/32/48 | legacy tabs, bookmarks, Windows shortcuts |
 
 Design notes:
 
-- Palette: violet `#7c4dff` → `#48178f` tile with a white emblem, so it reads on a dark *or* light
-  home screen and stays legible at 16 px (the app's near-black UI would swallow a dark icon).
-- The favicon is a **simplified** variant of the same mark: same geometry, 12 % larger, no glow or
-  drop shadow, so 16 px stays clean instead of muddy.
+- Palette: matte black `#15151a → #050506` with a gold ramp `#FBEFC4 → #D4AF37 → #9C7524`. The gold
+  hairline frame is what keeps the tile from disappearing on a dark home screen.
+- **Two lockups on purpose:** the wordmark is unreadable below ~120 px of icon, so the favicon and
+  any sub-192 px use is the crown alone — same colour, same silhouette family.
+- `favicon.svg` contains no `<text>` and no font, so it renders identically in every browser without
+  a webfont request.
 - Corner radius on the rounded assets is **22.37 %** — the iOS squircle ratio.
-- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v5`) so
+- Changing any icon means bumping `VERSION` in `public/sw.js` (currently `coachsathi-v6`) so
   already-installed copies pick up the new cache.
 
 ## Deploying to Vercel
