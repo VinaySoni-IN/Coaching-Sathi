@@ -63,7 +63,7 @@ describe('WhatsApp message pop-up (MP)', () => {
 
 describe('Students list: one red Message button (MW)', () => {
   const noop = () => {}
-  const page = (students: Student[], over: Record<string, unknown> = {}) => render(<StudentsPage teacherName="P" centre="C" batches={[batch({ students })]} feeRates={{ neet: R(2500) }} feeHist={{}} defaultFee={R(2000)} onAddStudent={noop} onEditStudent={noop} onOpenStudent={noop} onAddParent={noop} onNewBatch={noop} onEditBatch={noop} onSettings={noop} {...over} />)
+  const page = (students: Student[], over: Record<string, unknown> = {}) => render(<StudentsPage teacherName="P" centre="C" batches={[batch({ students })]} feeRates={{ neet: R(2500) }} feeHist={{}} defaultFee={R(2000)} onAddStudent={noop} onEditStudent={noop} onOpenStudent={noop} onAddParent={noop} onNewBatch={noop} onEditBatch={noop} onSettings={noop} onBackup={noop} {...over} />)
 
   const msg = (n: string) => screen.getByRole('button', { name: `Message ${n} on WhatsApp` }) as HTMLButtonElement
   it('MW-01 each row has ONE red bold-white "Message" button (the Parent / Student pills are gone) next to Call and Edit', () => {

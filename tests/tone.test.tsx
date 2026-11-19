@@ -47,7 +47,7 @@ describe('Message button colour follows who it messages (TN)', () => {
   })
   it('TN-04 a student with both numbers shows red (parent first); the pop-up still lets you pick the student', () => {
     const noop = () => {}
-    render(<StudentsPage teacherName="P" centre="C" batches={[batch({ students: [both, ownOnly, parentOnly, nobody] })]} feeRates={{ neet: R(2500) }} feeHist={{}} defaultFee={R(2000)} onAddStudent={noop} onEditStudent={noop} onOpenStudent={noop} onAddParent={noop} onNewBatch={noop} onEditBatch={noop} onSettings={noop} />)
+    render(<StudentsPage teacherName="P" centre="C" batches={[batch({ students: [both, ownOnly, parentOnly, nobody] })]} feeRates={{ neet: R(2500) }} feeHist={{}} defaultFee={R(2000)} onAddStudent={noop} onEditStudent={noop} onOpenStudent={noop} onAddParent={noop} onNewBatch={noop} onEditBatch={noop} onSettings={noop} onBackup={noop} />)
     const get = (n: string) => screen.getByRole('button', { name: `Message ${n} on WhatsApp` })
     expect(get('Rohan Gupta').style.background).toMatch(RED); expect(get('Kabir Singh').style.background).toMatch(RED); expect(get('No Number').style.background).toMatch(RED)
     expect(get('Diya Menon').style.background).toMatch(GREEN); expect(get('Diya Menon').textContent).toBe('Message student')
@@ -144,7 +144,7 @@ describe('Call and WhatsApp pop-ups are the same design (CS)', () => {
   })
   it('CS-05 the Students list Call icon opens the call menu with both numbers and a missing parent row to add', () => {
     const onAdd = vi.fn(), noop = () => {}
-    render(<StudentsPage teacherName="P" centre="C" batches={[batch({ students: [ownOnly] })]} feeRates={{ neet: R(2500) }} feeHist={{}} defaultFee={R(2000)} onAddStudent={noop} onEditStudent={noop} onOpenStudent={noop} onAddParent={onAdd} onNewBatch={noop} onEditBatch={noop} onSettings={noop} />)
+    render(<StudentsPage teacherName="P" centre="C" batches={[batch({ students: [ownOnly] })]} feeRates={{ neet: R(2500) }} feeHist={{}} defaultFee={R(2000)} onAddStudent={noop} onEditStudent={noop} onOpenStudent={noop} onAddParent={onAdd} onNewBatch={noop} onEditBatch={noop} onSettings={noop} onBackup={noop} />)
     fireEvent.click(screen.getByRole('button', { name: 'Call Diya Menon' }))
     const d = screen.getByRole('dialog', { name: /Who to call for Diya Menon/ })
     expect(within(d).getByRole('link', { name: /Call student/ }).getAttribute('href')).toBe('tel:+919876543210')

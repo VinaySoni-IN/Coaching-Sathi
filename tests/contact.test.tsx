@@ -72,7 +72,7 @@ describe('Call popup (CP)', () => {
   const noop = () => {}
   const pageProps = (students: Student[]) => ({
     teacherName: 'Priya', centre: 'C', batches: [batch({ students })], feeRates: { neet: R(2500) }, feeHist: {}, defaultFee: R(2000),
-    onAddStudent: noop, onEditStudent: noop, onOpenStudent: noop, onAddParent: noop, onNewBatch: noop, onEditBatch: noop, onSettings: noop,
+    onAddStudent: noop, onEditStudent: noop, onOpenStudent: noop, onAddParent: noop, onNewBatch: noop, onEditBatch: noop, onSettings: noop, onBackup: noop,
   })
 
   it('CP-01 tapping Call in the Students section opens a popup asking who to call, with both numbers', () => {

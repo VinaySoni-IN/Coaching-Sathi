@@ -1,18 +1,18 @@
-/* An in-memory stand-in for the Supabase client, so the whole suite (including the end-to-end app tests)
-   runs the real cloud code paths without a network. It mirrors the pieces the app actually calls:
-   auth (session, sign-up, sign-in, update), `profiles`, `app_state` and the two RPCs. */
+/* An in-memory stand-in for the Supabase client, so the whole suite runs the real account and manual
+   cloud-backup code paths without a network. It mirrors only the pieces the app actually calls:
+   auth (session, sign-up, sign-in, update), `profiles`, `cloud_backups`, and the RPCs. */
 import { setCloudClient } from '../src/lib/cloud'
 import { TEACHER_CACHE } from '../src/lib/auth'
 
 export interface FakeUser { id: string; email: string; password: string; name: string }
 interface ProfileRow { id: string; name: string; email: string; email_canonical?: string }
-interface StateRow { doc: unknown; rev: number }
+interface BackupRow { doc: unknown; client_id: string | null; updated_at: string }
 
 const db = {
   users: [] as FakeUser[],
   session: null as string | null,
   profiles: new Map<string, ProfileRow>(),
-  states: new Map<string, StateRow>(),
+  backups: new Map<string, BackupRow>(),
   seq: 0,
   /** Set once the test drives auth explicitly; until then a seeded teacher cache stands in for the session. */
   touched: false,
@@ -22,7 +22,7 @@ export function resetFakeCloud() {
   db.users = []
   db.session = null
   db.profiles.clear()
-  db.states.clear()
+  db.backups.clear()
   db.seq = 0
   db.touched = false
 }
@@ -50,15 +50,20 @@ function currentUser(): FakeUser | null {
 
 const asUser = (u: FakeUser) => ({ id: u.id, email: u.email, user_metadata: { name: u.name } })
 const err = (message: string, code = '400') => ({ data: null, session: null, error: { message, code } })
+const authErr = (message: string, code = '28000') => ({ data: { user: null }, error: { message, code } })
 
 type Res<T> = { data: T; error: null }
 
 /* --- tiny query builder: only the shapes the app uses --- */
 function from(table: string) {
-  const filter: { id?: string } = {}
+  const filter: { id?: string; user_id?: string } = {}
   const builder = {
     select: () => builder,
-    eq: (column: string, value: string) => { if (column === 'id') filter.id = value; return builder },
+    eq: (column: string, value: string) => {
+      if (column === 'id') filter.id = value
+      if (column === 'user_id') filter.user_id = value
+      return builder
+    },
     maybeSingle: async (): Promise<Res<unknown>> => {
       const me = currentUser()
       if (!me) return { data: null, error: null }
@@ -66,9 +71,11 @@ function from(table: string) {
         const row = db.profiles.get(filter.id ?? me.id) ?? null
         return { data: row, error: null }
       }
-      if (table === 'app_state') {
-        const row = db.states.get(me.id) ?? null
-        return { data: row ? { doc: row.doc, rev: row.rev } : null, error: null }
+      if (table === 'cloud_backups') {
+        const uid = filter.user_id ?? me.id
+        if (uid !== me.id) return { data: null, error: null } // RLS: no other teacher's row
+        const row = db.backups.get(me.id) ?? null
+        return { data: row ? { doc: row.doc, updated_at: row.updated_at } : null, error: null }
       }
       return { data: null, error: null }
     },
@@ -85,6 +92,10 @@ export const fakeCloud = {
     getSession: async () => {
       const me = currentUser()
       return { data: { session: me ? { user: asUser(me) } : null }, error: null }
+    },
+    getUser: async () => {
+      const me = currentUser()
+      return me ? { data: { user: asUser(me) }, error: null } : authErr('not authenticated')
     },
     signUp: async ({ email, password, options }: { email: string; password: string; options?: { data?: { name?: string } } }) => {
       const mail = email.trim().toLowerCase()
@@ -122,19 +133,20 @@ export const fakeCloud = {
       const target = String(args.p_canonical ?? '')
       return { data: [...db.profiles.values()].some((p) => p.email_canonical === target || p.email === target), error: null }
     }
-    if (name === 'push_state') {
-      const row = db.states.get(me.id) ?? { doc: null, rev: 0 }
-      const expected = args.p_expected_rev as number | null
-      if (expected !== null && expected !== undefined && expected !== row.rev) {
-        return { data: null, error: { message: 'stale_rev', code: '40001', details: String(row.rev) } }
-      }
-      const next = { doc: args.p_doc, rev: row.rev + 1 }
-      db.states.set(me.id, next)
-      return { data: { rev: next.rev, doc: next.doc }, error: null }
+    if (name === 'save_my_backup') {
+      const doc = args.p_doc
+      if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return err('backup must be a JSON object', '22023')
+      const stamp = new Date().toISOString()
+      db.backups.set(me.id, { doc, client_id: typeof args.p_client === 'string' ? args.p_client : null, updated_at: stamp })
+      return { data: stamp, error: null }
+    }
+    if (name === 'read_my_backup') {
+      const row = db.backups.get(me.id)
+      return { data: row ? [{ doc: row.doc, updated_at: row.updated_at }] : [], error: null }
     }
     if (name === 'delete_me') {
       db.touched = true
-      db.states.delete(me.id)
+      db.backups.delete(me.id)
       db.profiles.delete(me.id)
       db.users = db.users.filter((u) => u.id !== me.id)
       db.session = null
@@ -152,6 +164,22 @@ export function seedFakeUser(email: string, password: string, name = email) {
   db.profiles.set(user.id, { id: user.id, name: user.name, email: mail, email_canonical: mail })
   return user
 }
+
+/** Switches the fake to a different signed-in teacher; RLS is simulated by `currentUser()`. */
+export function setFakeSession(userId: string) {
+  const user = db.users.find((u) => u.id === userId)
+  if (!user) throw new Error(`unknown fake user ${userId}`)
+  db.session = userId
+  db.touched = true
+  try { localStorage.setItem(TEACHER_CACHE, JSON.stringify({ id: user.id, email: user.email, name: user.name })) } catch { /* ignore */ }
+}
+
+/** Seeds a row in the fake cloud_backups table (also useful for damaged-backup tests). */
+export function seedFakeBackup(userId: string, doc: unknown, updatedAt = new Date().toISOString()) {
+  db.backups.set(userId, { doc, client_id: null, updated_at: updatedAt })
+}
+
+export const fakeBackupFor = (userId: string) => db.backups.get(userId)?.doc ?? null
 
 /** Pretends the refresh token was revoked on the server (session gone, cache still on the device). */
 export function expireFakeSession() {

@@ -86,10 +86,16 @@ export const seedJson = (withSample: boolean, centre: string, now = new Date()) 
   return JSON.stringify({ ...s, batches: withSample ? s.batches : [], seq: { receipt: 0, student: withSample ? 21 : 0 }, centre: centre.trim() || DEFAULT_CENTRE })
 }
 
+/** A blank workspace. Missing/corrupt local data must never invent sample students for a real account. */
+function emptyState(now = new Date()): State {
+  const s = makeSeed(now)
+  return { ...s, batches: [], seq: { receipt: 0, student: 0 } }
+}
+
 function load(key: string): State {
   let raw: string | null = null
   try { raw = localStorage.getItem(key) } catch { /* storage blocked */ }
-  if (!raw) return makeSeed()
+  if (!raw) return emptyState()
   try {
     const parsed = JSON.parse(raw)
     // One-time upgrade from whole rupees to integer paise: keep the untouched pre-upgrade copy for safety.
@@ -104,7 +110,7 @@ function load(key: string): State {
     }
   } catch { /* fall through */ }
   try { localStorage.setItem(`${key}:recovery`, raw) } catch { /* ignore */ }
-  return makeSeed()
+  return emptyState()
 }
 
 export const feeKey = (month: string, studentId: string) => `${month}|${studentId}`
@@ -218,8 +224,17 @@ export function useAttendance(teacherId: string) {
 
   const replaceState = useCallback((next: State) => apply(() => next), [apply])
 
+  /** Adopts an already-written local snapshot without merging it with the previous in-memory state.
+      Used by manual cloud restore so a complete overwrite really is complete. */
+  const adoptState = useCallback((next: State, json: string) => {
+    lastSaved.current = json
+    ref.current = next
+    setState(next)
+    setSaveError(false)
+  }, [])
+
   return {
-    state, saveError, own, replaceState,
+    state, saveError, own, replaceState, adoptState,
     setMark, setLocked, resetMarks,
     addPayment, voidPayment, addCharge, voidCharge, addAdjustment, voidAdjustment,
     setFeeRate, setDefaultFee, setTemplates, setCentre, markSent,

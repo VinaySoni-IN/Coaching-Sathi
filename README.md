@@ -5,8 +5,9 @@ track monthly fees, take payments, send WhatsApp messages to parents, and export
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FVinaySoni-IN%2FCoaching-Sathi&framework=vite)
 
-Everything is stored on the device (`localStorage`) — no server, no accounts backend, no data leaves
-the phone unless the teacher exports or shares it.
+Workspace data is stored on the device (`localStorage`) and is the source of truth. Supabase Auth owns
+teacher accounts; workspace data leaves the phone only when the teacher explicitly uploads a cloud backup
+or downloads a JSON backup file.
 
 ## Features
 
@@ -22,11 +23,14 @@ the phone unless the teacher exports or shares it.
 - **Reminders & messages** — templated WhatsApp messages for presence, absence and fee reminders,
   opened through `wa.me` links (`src/lib/wa.ts`).
 - **Reports** — printable invoices/statements and `.xlsx` export via SheetJS (`src/lib/report.ts`).
-- **Backup & restore** — JSON export/import of a teacher's whole dataset (`src/lib/backup.ts`).
-- **Local accounts** — each teacher signs in with email + password; the password is hashed with
-  PBKDF2-SHA256 (120k iterations) in the browser and data is namespaced per teacher id
-  (`src/lib/auth.ts`). This is device-local convenience, not a security boundary against someone
-  with access to the unlocked device.
+- **Manual cloud Backup & Restore** — the cloud button beside `+` opens exactly two actions:
+  *Upload Backup (Sync to Cloud)* and *Download &amp; Overwrite (Restore Data)*. Each backup is one
+  complete, replaceable snapshot tied to the signed-in teacher with row-level security
+  (`src/lib/cloudBackup.ts`, `src/components/BackupMenu.tsx`, `supabase/migrations/`).
+- **File backup & restore** — JSON export/import of a teacher's whole dataset (`src/lib/backup.ts`).
+- **Teacher accounts** — Supabase Auth handles email + password, session restore, password reset and
+  the profile name. One device keeps each teacher's workspace under its own `coachdesk:data:<userId>`
+  key; no background sync or merge runs (`src/lib/auth.ts`).
 - **Installable PWA** — manifest, maskable icons and service worker (`public/`).
 
 ## Getting started
@@ -41,7 +45,7 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Vite dev server (binds to all interfaces, accepts proxied preview hosts) |
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
-| `npm test` | Vitest suite (happy-dom), 305 tests across 19 files |
+| `npm test` | Vitest suite (happy-dom), 327 tests across 22 files |
 | `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
@@ -49,7 +53,7 @@ npm run dev        # http://localhost:5173
 ```
 src/
   App.tsx            shell, routing between pages, all the confirm/toast orchestration
-  components/        screens and bottom sheets (attendance, fees, students, settings, …)
+  components/        screens, bottom sheets and the BackupMenu popup
   lib/
     store.ts         persisted state + useAttendance hook
     ledger.ts        fee steps, marks, derivation/sanitising of saved state
@@ -57,7 +61,9 @@ src/
     payments.ts      receipts, allocation, discounts, charges, reversals
     report.ts        invoice/report rendering + xlsx export
     wa.ts            WhatsApp templates and link building
-    auth.ts          local teacher accounts and sessions
+    auth.ts          Supabase teacher accounts and sessions
+    cloud.ts         lazy Supabase client + friendly error messages
+    cloudBackup.ts   explicit snapshot upload / fetch / local overwrite
     money.ts, phone.ts, email.ts, backup.ts, photo.ts, …
 public/              manifest, app icons + favicon, service worker
 tests/               Vitest suites (unit + component + E2E-style flows)
@@ -115,43 +121,57 @@ feather, then 2 % breathing room and a 4× Lanczos downscale with a light unshar
   rules keep icon bytes for up to a year, so re-uploading different pixels to the *same* URL is
   invisible to anyone who has visited before — even after uninstalling the PWA. Bumping the suffix
   gives every release brand-new URLs, which is why those files can be cached `immutable`.
-  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v13`).
+  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v17`).
 
-## Cloud sync (Supabase)
+## Manual Backup &amp; Restore (Supabase)
 
-Accounts and data are **online**: signing in on any device brings the whole workspace with it.
+Accounts are online; **workspace data is local-first**. Supabase Auth supplies the verified teacher ID,
+but nothing is pushed, pulled, merged or queued in the background. The cloud is only a replaceable
+snapshot for moving data between devices.
 
 | Piece | What it does |
 | --- | --- |
 | Supabase Auth | email + password, session persisted and refreshed; password reset by email |
-| `public.profiles` | one row per user (`id → auth.users`), display name + canonical mailbox (Gmail dots/`+tags` cannot create two accounts) |
-| `public.app_state` | one row per user holding the whole workspace document as `jsonb`, plus a `rev` |
-| `public.sync_log` | the last 25 snapshots of that document, so any bad write can be put back |
-| `push_state(doc, expected_rev, client)` | the only write path: locks the row, rejects stale revisions, bumps `rev` |
-| `v_batches` `v_students` `v_attendance` `v_payments` `v_charges` `v_adjustments` | the document shredded into ordinary rows for SQL/reporting |
-| `delete_me()` | "delete account & data" — drops the auth user, which cascades to every row |
+| `public.profiles` | one row per user (`id → auth.users`), display name + canonical mailbox |
+| `public.cloud_backups` | **one row per teacher**: `user_id → auth.users`, whole snapshot as `jsonb`, `updated_at` |
+| `save_my_backup(doc, client)` | the only write path: `user_id` comes from `auth.uid()`, upsert completely overwrites the old copy |
+| `read_my_backup()` | the only read path: no user-id argument, so a teacher cannot request another teacher's row |
+| `public.app_state`, `sync_log`, SQL views | kept readable for history/reporting; `push_state` and authenticated writes to `app_state` are revoked |
+| `delete_me()` | deletes the auth user, which cascades to the profile, old state and cloud backup |
+| `email_taken()` | one mailbox = one account, even across Gmail dots / `+tags` |
 
-Row level security is on for all three tables; every policy is `auth.uid() = user_id`, and `anon` has no grants at all.
+`cloud_backups` has row-level security enabled. Its single `ALL` policy is
+`auth.uid() = user_id` for both `USING` and `WITH CHECK`; `anon` has no grants. The migration also
+revokes the old `push_state` execute grant and every client-side write privilege on `app_state`
+(including `TRUNCATE`, which RLS does not govern), leaving only `SELECT` for historical/reporting use.
+A stale cached PWA therefore cannot resume automatic two-way sync.
 
-**Lifecycle** (`src/lib/sync.ts`)
+**Flows**
 
-- **on login** — `hydrate()` pulls the cloud document, merges it with whatever this device has
-  (`mergeStates`, the same union used between tabs), writes the result to the local backup and pushes
-  whatever the cloud did not have yet. Old pre-account data (`coachdesk:v1`, `coachdesk:data:*`) is
-  folded in on the first login and never dropped.
-- **on every change** — debounced 1.2 s, then pushed with the revision it was based on.
-- **conflicts** — a stale write is rejected by Postgres (`40001 stale_rev`); the device then pulls the
-  newer copy, merges, and retries once. Two devices can never silently overwrite each other.
-- **offline** — writes queue in memory, the local backup keeps working, the UI shows *Offline*, and the
-  queue flushes on `online`/tab-focus or the next change.
+- **Cloud button** — beside the `+` button on the attendance home header and the Students tab header.
+  The popup contains exactly two options: *Upload Backup (Sync to Cloud)* and
+  *Download &amp; Overwrite (Restore Data)*.
+- **Upload Backup** — builds a sanitized snapshot of the whole local `State` (batches, students,
+  attendance, fees, adjustments, charges, message templates, centre, default fee) plus small
+  per-teacher UI settings such as the selected batch. `save_my_backup` replaces the previous cloud row
+  for `auth.uid()` — no row-by-row merge. A success toast and inline status confirm it.
+- **Download &amp; Overwrite** — `read_my_backup` fetches only the authenticated teacher's row. The UI
+  shows a confirmation warning, then validates the envelope (including `teacherId`), clears this
+  teacher's scoped local keys, writes the snapshot, keeps a `:before-restore` safety copy and adopts
+  the new state immediately. No page reload or background merge is needed.
+- **Errors** — offline, expired session, unconfigured project, oversized snapshot, damaged backup and
+  a new teacher with no backup each produce a clear toast/status without touching local data.
 
-**Local is only a backup.** `coachdesk:data:<userId>` exists so the app opens instantly and works with
-no network; `coachdesk:teacher` holds the signed-in identity for the first paint and is always verified
-against the server. Signing out clears both, and the cloud row is the source of truth.
+**Local is the source of truth.** `coachdesk:data:<userId>` opens the app instantly and works offline;
+`coachdesk:teacher` is the cached identity and is always verified against Supabase. Signing out keeps
+the local workspace on the device. Use Upload Backup before switching devices, then Download &amp;
+Overwrite there.
 
-**Setup**: run the migrations in `supabase/migrations/` (SQL editor or `supabase db push`), then set
-`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (see `.env.example`; both are public values). Vercel
-already has them for production, preview and development.
+**Setup**: run the migrations in `supabase/migrations/` (SQL editor or `supabase db push`), including
+`20261119150845_manual_cloud_backups.sql` and
+`20261119152547_revoke_app_state_client_writes.sql`, then set `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` (see `.env.example`; both are public values). Vercel already has them for
+production, preview and development. No additional environment variables are required.
 
 ## Deploying to Vercel
 

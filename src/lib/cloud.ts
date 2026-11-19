@@ -1,17 +1,18 @@
-/* Supabase client. The app is online-first: accounts and data live in Postgres, the browser only keeps a
-   local copy as an offline backup. Nothing here runs at import time, so the app still boots (and the whole
-   test suite still runs) when the two VITE_ variables are absent — every call then fails with a clear message. */
+/* Supabase client. Accounts live in Supabase Auth, but the workspace data is local-first: the browser is
+   the source of truth and the cloud is only touched by an explicit manual Backup & Restore action.
+   Nothing here runs at import time, so the app still boots (and the whole test suite still runs) when the
+   two VITE_ variables are absent — every cloud call then fails with a clear message. */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 const url = (import.meta.env?.VITE_SUPABASE_URL ?? '').trim()
 const anonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '').trim()
 
-/** True when this build was given a project to talk to. */
-export const cloudConfigured = () => Boolean(url && anonKey)
-
-export const CLOUD_MISSING = 'Cloud sync is not configured for this build. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'
-
 let client: SupabaseClient | null = null
+
+/** True when this build was given a project to talk to (or the test fake has been installed). */
+export const cloudConfigured = () => Boolean(client || (url && anonKey))
+
+export const CLOUD_MISSING = 'Cloud backup is not configured for this build. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'
 
 /** Test seam: lets the suite run against an in-memory stand-in instead of a live project. */
 export function setCloudClient(next: SupabaseClient | null) {
@@ -22,23 +23,21 @@ export function setCloudClient(next: SupabaseClient | null) {
 export function sb(): SupabaseClient {
   if (client) return client
   if (!cloudConfigured()) throw new Error(CLOUD_MISSING)
-  if (!client) {
-    client = createClient(url, anonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-        storageKey: 'coachdesk:cloud-session',
-      },
-    })
-  }
+  client = createClient(url, anonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+      storageKey: 'coachdesk:cloud-session',
+    },
+  })
   return client
 }
 
-/** Browsers are offline sometimes; navigator.onLine is a hint, the write itself is the proof. */
+/** Browsers are offline sometimes; navigator.onLine is a hint, the request itself is the proof. */
 export const isOnline = () => (typeof navigator === 'undefined' ? true : navigator.onLine !== false)
 
-/** Every device gets a stable id so the row records which device wrote last. */
+/** Which device wrote the current manual backup (metadata only; never used to identify the teacher). */
 export const clientId = (() => {
   const KEY = 'coachdesk:client-id'
   try {
@@ -69,17 +68,9 @@ export function cloudMessage(e: unknown, fallback = 'Could not reach the server.
   if (m.includes('password should be at least')) return 'Password must be at least 6 characters.'
   if (m.includes('unable to validate email') || m.includes('invalid format')) return 'That email address is not valid.'
   if (m.includes('rate limit') || m.includes('too many requests')) return 'Too many attempts. Please wait a minute and try again.'
-  if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('network request failed')) return 'No internet connection. Your data is safe on this device and will sync when you are back online.'
+  if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('network request failed')) return 'No internet connection. Your data is safe on this device. Connect to the internet and try again.'
+  if (m.includes('jwt expired') || m.includes('invalid jwt') || m.includes('not authenticated') || m.includes('session has ended')) return 'Your session has ended. Sign in again to use cloud backup.'
+  if (m.includes('row-level security') || m.includes('permission denied') || m.includes('new row violates')) return 'This backup belongs to a different account or cannot be changed. Sign in again.'
   if (m.includes('not configured')) return CLOUD_MISSING
-  if (m.includes('stale_rev')) return 'Another device saved something newer. Merging your changes…'
   return raw.length > 160 ? fallback : raw
-}
-
-/** Compare two values for structural equality (used to avoid pointless writes). */
-export const sameJson = (a: unknown, b: unknown) => {
-  try {
-    return JSON.stringify(a) === JSON.stringify(b)
-  } catch {
-    return false
-  }
 }

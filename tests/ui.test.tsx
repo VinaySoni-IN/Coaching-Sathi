@@ -203,10 +203,10 @@ describe('Storage, sync and races (SY)', () => {
     expect(result.current.state).toBe(before)
   })
 
-  it('SY-09 corrupt storage is never silently destroyed: an untouched copy is kept', () => {
+  it('SY-09 corrupt storage is never silently destroyed: an untouched copy is kept and no demo students are invented', () => {
     localStorage.setItem(KEY, '{"batches":[{"id":"x","students":[{"id":"s"}]}],"txns":[{"amount":"zzz"}]')
     const { result } = renderHook(() => useAttendance('t1'))
-    expect(result.current.state.batches.length).toBeGreaterThan(0)
+    expect(result.current.state.batches).toHaveLength(0)
     expect(localStorage.getItem(`${KEY}:recovery`)).toContain('"amount":"zzz"')
   })
 

@@ -27,8 +27,10 @@ describe('App renamed to "Coaching Sathi" (RN)', () => {
     const m = JSON.parse(read('public/manifest.webmanifest'))
     expect(m.id).toBe('./'); expect(m.start_url).toBe('./'); expect(m.scope).toBe('./')
   })
-  it('RN-03 the service worker uses a new cache name so installed copies refresh to the new name', () => {
-    expect(read('public/sw.js')).toMatch(/const VERSION = 'coachsathi-v15'/)
+  it('RN-03 the service worker uses a new cache name and never caches teacher-specific Supabase responses', () => {
+    const sw = read('public/sw.js')
+    expect(sw).toMatch(/const VERSION = 'coachsathi-v17'/)
+    expect(sw).toMatch(/url\.origin !== self\.location\.origin\) return/)
   })
   it('RN-04 no user-facing "Coaching Desk" is left in the app (only the internal upgrade constant and storage keys)', () => {
     for (const f of ['index.html', 'public/manifest.webmanifest', 'public/sw.js', 'src/components/AuthScreen.tsx', 'src/components/SettingsSheet.tsx', 'src/components/ReportSheet.tsx', 'src/components/InvoiceSheet.tsx', 'src/lib/report.ts', 'src/lib/backup.ts']) {

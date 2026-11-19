@@ -4,7 +4,7 @@ import MessageSheet from './MessageSheet'
 import RecipientButtons from './RecipientButtons'
 import { normalizePhone } from '../lib/wa'
 import { defaultWho } from '../lib/recipient'
-import { Clock, Pencil, Phone, Plus, Search, Settings, Users } from 'lucide-react'
+import { Clock, CloudUpload, Pencil, Phone, Plus, Search, Settings, Users } from 'lucide-react'
 import Avatar from './Avatar'
 import { feeFor } from '../lib/store'
 import { inr, spanLabel } from '../lib/report'
@@ -26,6 +26,7 @@ interface Props {
   onNewBatch: () => void
   onEditBatch: (batch: Batch) => void
   onSettings: () => void
+  onBackup: () => void
 }
 
 const initials = (n: string) => n.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || 'T'
@@ -58,6 +59,9 @@ export default function StudentsPage(p: Props) {
         <div className="flex shrink-0 items-center gap-2">
           <button onClick={p.onSettings} aria-label="Account and settings" className="glass glass-btn grid h-11 w-11 place-items-center rounded-full bg-[#131315]/95">
             <span className="relative z-10 text-[14px] font-bold">{initials(p.teacherName)}</span>
+          </button>
+          <button onClick={p.onBackup} aria-label="Backup and restore" className="glass glass-btn grid h-11 w-11 place-items-center rounded-full bg-[#131315]/95" title="Backup & Cloud">
+            <CloudUpload size={20} className="relative z-10" />
           </button>
           <button
             onClick={() => (seg === 'batches' || !addTarget ? p.onNewBatch() : p.onAddStudent(addTarget))}
