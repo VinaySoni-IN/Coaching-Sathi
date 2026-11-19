@@ -1,5 +1,5 @@
 /* Coaching Sathi service worker — offline-first app shell, works under any GitHub Pages sub-path */
-const VERSION = 'coachsathi-v15' // new cache name: installed apps pick up the new name and old caches are cleared
+const VERSION = 'coachsathi-v17' // manual backup build; cross-origin Supabase responses are never cached
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192-v10.png', './icon-512-v10.png', './icon-maskable-512-v10.png', './apple-touch-icon-v10.png', './favicon-anim-32-v13.png', './favicon-128-v13.png', './favicon-v13.ico']
 
 self.addEventListener('install', (e) => {
@@ -16,7 +16,11 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const req = e.request
-  if (req.method !== 'GET' || !req.url.startsWith('http')) return
+  if (req.method !== 'GET') return
+  const url = new URL(req.url)
+  // Only same-origin app-shell assets may be cached. Supabase Auth / backup responses carry a
+  // teacher-specific Authorization header; caching them could expose one account's data to another.
+  if (url.origin !== self.location.origin) return
 
   // Page navigations: network first, fall back to cached shell when offline
   if (req.mode === 'navigate') {

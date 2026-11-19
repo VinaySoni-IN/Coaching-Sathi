@@ -117,7 +117,7 @@ export default function AuthScreen({ onAuth, note }: { onAuth: (t: Teacher, seed
           {ok && <p role="status" className="mb-3 rounded-2xl bg-present/15 px-4 py-2.5 text-[13.5px] text-present ring-1 ring-present/40">{ok}</p>}
           {!cloudConfigured() && (
             <p data-cloud-missing className="mb-3 rounded-2xl bg-absent/15 px-4 py-2.5 text-[13px] text-[#ff9aa8] ring-1 ring-absent/40">
-              This build has no cloud project configured, so accounts cannot be created. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+              This build has no cloud project configured, so accounts and cloud backups cannot be used. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
             </p>
           )}
 
@@ -132,7 +132,7 @@ export default function AuthScreen({ onAuth, note }: { onAuth: (t: Teacher, seed
 
           <p className="mt-4 flex items-start gap-2 text-[12px] leading-relaxed text-white/65">
             <ShieldCheck size={15} className="mt-0.5 shrink-0" />
-            Your account lives in the cloud: sign in on any phone, tablet or laptop and your batches, students, attendance, fees and settings are there. Anything saved on this device before is uploaded automatically the first time you sign in.
+            Your account lives in the cloud, but your data stays on this device until you choose Upload Backup. To move it to another device, use Download &amp; Overwrite there. No background sync runs.
           </p>
         </div>
       </motion.form>

@@ -1,12 +1,12 @@
-/* Teacher accounts, fully online. Supabase Auth owns the account (email + password + session) and the
-   `profiles` row owns the display name; `app_state` owns the data. The browser keeps a copy of the
-   data under `coachdesk:data:<userId>` purely as an offline backup — never as the source of truth. */
+/* Teacher accounts. Supabase Auth owns the account (email + password + session) and `profiles` owns
+   the display name. Workspace data lives on this device under `coachdesk:data:<userId>` and is the
+   source of truth; Supabase is used only for explicit, manual cloud backups. */
 import { canonicalEmail, checkEmail } from './email'
 import { cloudMessage, sb } from './cloud'
 
 export interface Teacher { id: string; name: string; email: string }
 
-/** Where this account's local backup lives. Keyed by user id, so two teachers on one device never mix. */
+/** Where this account's local workspace lives. Keyed by user id, so two teachers on one device never mix. */
 export const dataKeyFor = (teacherId: string) => `coachdesk:data:${teacherId}`
 /** Data written by versions of the app that existed before accounts were online. Imported once, then kept as a backup. */
 export const LEGACY_KEY = 'coachdesk:v1'
@@ -50,17 +50,18 @@ async function profileOf(fallback: Teacher): Promise<Teacher> {
   return fallback
 }
 
-/** The teacher signed in on this device, or null. Refreshes the token when needed. */
+/** The teacher signed in on this device, or null. A network failure must not lock a teacher out of local data. */
 export async function restoreSession(): Promise<Teacher | null> {
   try {
-    const { data } = await sb().auth.getSession()
+    const { data, error } = await sb().auth.getSession()
+    if (error) throw error
     const user = data.session?.user
     if (!user) return null
     const teacher = await profileOf(asTeacher(user.id, user.email, user.user_metadata?.name as string | undefined))
     cacheTeacher(teacher)
     return teacher
   } catch {
-    return null
+    return cachedTeacher()
   }
 }
 
@@ -139,7 +140,7 @@ export async function renameTeacher(name: string): Promise<Teacher> {
   return teacher
 }
 
-/** Removes the account, every synced row (cascade) and the local copy on this device. */
+/** Removes the account; the auth-user cascade also drops its profile and cloud backup. */
 export async function deleteAccount(teacherId: string): Promise<void> {
   const { error } = await sb().rpc('delete_me')
   if (error) throw new Error(cloudMessage(error, 'Could not delete the account. Try again.'))
@@ -157,7 +158,13 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
 /** Drops this device's copy of an account's data (used by "delete account" and by a hard reset). */
 export function clearLocalData(teacherId: string) {
+  const base = dataKeyFor(teacherId)
   try {
-    for (const key of [dataKeyFor(teacherId), `${dataKeyFor(teacherId)}:recovery`, `${dataKeyFor(teacherId)}:pre-v3`, `coachdesk:batch:${teacherId}`]) localStorage.removeItem(key)
+    const keys = [base, `${base}:recovery`, `${base}:pre-v3`, `${base}:before-restore`, `coachdesk:batch:${teacherId}`, `coachdesk:legacy-imported:${teacherId}`]
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key && (key.startsWith(`${base}:`) || key.startsWith(`coachdesk:pref:${teacherId}:`) || key.startsWith(`coachdesk:ui:${teacherId}:`))) keys.push(key)
+    }
+    for (const key of new Set(keys)) localStorage.removeItem(key)
   } catch { /* storage blocked */ }
 }

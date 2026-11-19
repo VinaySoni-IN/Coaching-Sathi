@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, MessageCircle, Plus } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, CloudUpload, MessageCircle, Plus } from 'lucide-react'
 import BatchBar from './components/BatchBar'
 import BottomNav from './components/BottomNav'
 import type { Page } from './components/BottomNav'
@@ -10,9 +10,9 @@ import { BatchForm, StudentForm } from './components/ManageSheets'
 import type { BatchTarget, StudentTarget } from './components/ManageSheets'
 import { cachedTeacher, clearTeacherCache, deleteAccount, dataKeyFor, renameTeacher, restoreSession, signOut } from './lib/auth'
 import type { Teacher } from './lib/auth'
-import { hydrate, sync } from './lib/sync'
-import type { SyncInfo } from './lib/sync'
-import SyncGate from './components/SyncGate'
+import { applyCloudBackupLocally, fetchCloudBackup, initializeLocalData, uploadCloudBackup } from './lib/cloudBackup'
+import BackupMenu from './components/BackupMenu'
+import type { BackupBusy } from './components/BackupMenu'
 import StudentsPage from './components/StudentsPage'
 import StudentProfile from './components/StudentProfile'
 import AddParentSheet from './components/AddParentSheet'
@@ -54,19 +54,16 @@ function label(d: Date) {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+const backupTime = (iso: string) => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? 'your account' : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 const NO_BATCH: Batch = { id: '__none', name: 'No batch yet', subject: '', time: '', students: [] }
 
 function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeacher: (t: Teacher) => void; onSignOut: () => void }) {
-  const { state, saveError, setMark, setLocked, resetMarks, addPayment, voidPayment, addAdjustment, voidAdjustment, addCharge, voidCharge, setFeeRate, setTemplates, setCentre, markSent, addBatch, editBatch, deleteBatch, createStudent, updateStudent, removeStudent, setDefaultFee } = useAttendance(teacher.id)
-  const syncInfo = useSyncInfo()
-  // Every local change reaches the cloud (debounced inside the engine). The first render is the state we
-  // just hydrated, so it is already in sync and is skipped.
-  const hydrated = useRef(true)
-  useEffect(() => { sync.start(teacher.id) }, [teacher.id])
-  useEffect(() => {
-    if (hydrated.current) { hydrated.current = false; return }
-    sync.schedule(state)
-  }, [state])
+  const { state, saveError, adoptState, setMark, setLocked, resetMarks, addPayment, voidPayment, addAdjustment, voidAdjustment, addCharge, voidCharge, setFeeRate, setTemplates, setCentre, markSent, addBatch, editBatch, deleteBatch, createStudent, updateStudent, removeStudent, setDefaultFee } = useAttendance(teacher.id)
   const [studentTarget, setStudentTarget] = useState<StudentTarget | null>(null)
   const [batchTarget, setBatchTarget] = useState<BatchTarget | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -74,6 +71,11 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
   const [rateOpen, setRateOpen] = useState(false)
   const [calOpen, setCalOpen] = useState(false)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
+  const [backupOpen, setBackupOpen] = useState(false)
+  const [backupBusy, setBackupBusy] = useState<BackupBusy>(null)
+  const [backupStatus, setBackupStatus] = useState<string | null>(null)
+  const [backupError, setBackupError] = useState<string | null>(null)
+  const openBackup = () => { setBackupStatus(null); setBackupError(null); setBackupOpen(true) }
   // Each confirmation can run its action at most once, however many times the button is tapped.
   const ask = (c: Omit<Confirm, 'run'>, fn: () => void) => {
     let used = false
@@ -133,6 +135,52 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
     toastTimer.current = setTimeout(() => setToast(null), 2200)
   }, [])
   useEffect(() => () => clearTimeout(toastTimer.current), [])
+
+  const runUpload = async () => {
+    if (backupBusy) return
+    setBackupBusy('upload'); setBackupError(null); setBackupStatus(null)
+    try {
+      const r = await uploadCloudBackup(teacher, state)
+      const msg = `Backup uploaded — ${plural(r.students, 'student')} and ${plural(r.payments, 'payment')} saved.`
+      setBackupStatus(msg); say(msg)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not upload the backup. Try again.'
+      setBackupError(msg); say(msg)
+    } finally { setBackupBusy(null) }
+  }
+
+  const beginRestore = async () => {
+    if (backupBusy) return
+    setBackupBusy('restore'); setBackupError(null); setBackupStatus(null)
+    try {
+      const remote = await fetchCloudBackup(teacher)
+      setBackupOpen(false)
+      ask(
+        { title: 'Restore cloud backup?', lines: [
+          `Backup saved ${backupTime(remote.updatedAt || remote.savedAt)} contains ${plural(remote.students, 'student')} and ${plural(remote.payments, 'payment')}.`,
+          'This completely replaces the students, attendance, fees and settings currently on this device.',
+          'A copy of your current local data is kept on this device before restoring.',
+        ], confirmLabel: 'Yes, overwrite', danger: true },
+        () => {
+          try {
+            const local = applyCloudBackupLocally(teacher, remote)
+            adoptState(local.state, local.json)
+            setBatchId(local.state.batches.some((b) => b.id === local.selectedBatchId) ? local.selectedBatchId! : local.state.batches[0]?.id ?? '')
+            setStudentTarget(null); setBatchTarget(null); setSettingsOpen(false); setWaOpen(false); setRateOpen(false); setCalOpen(false)
+            setProfileT(null); setParentAsk(null); setMsgT(null); setPaying(null)
+            const msg = `Cloud backup restored — ${plural(local.students, 'student')} and ${plural(local.payments, 'payment')}.`
+            setBackupStatus(msg); say(msg)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : 'Could not overwrite the local data. Try again.'
+            setBackupOpen(true); setBackupError(msg); say(msg)
+          }
+        },
+      )
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not read your cloud backup. Try again.'
+      setBackupError(msg); say(msg)
+    } finally { setBackupBusy(null) }
+  }
 
   useEffect(() => { if (saveError) say('Could not save to this device \u2014 storage is full or blocked. Download a backup now.') }, [saveError, say])
 
@@ -211,6 +259,7 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
           onNewBatch={() => setBatchTarget({ batch: null })}
           onEditBatch={(b) => setBatchTarget({ batch: b })}
           onSettings={() => setSettingsOpen(true)}
+          onBackup={openBackup}
         />}
         {page === 'attendance' && !noBatch && <>
         <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
@@ -221,13 +270,18 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
               </p>
               <h1 className="font-display text-[34px] font-semibold leading-[1.05] tracking-tight">{batch.name}</h1>
             </div>
-            <button
-              onClick={() => (locked ? lockedTap() : setStudentTarget({ batchId: batch.id, student: null }))}
-              aria-label="Add student"
-              className="glass glass-btn grid h-11 w-11 shrink-0 place-items-center rounded-full"
-            >
-              <Plus size={21} className="relative z-10" />
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button onClick={openBackup} aria-label="Backup and restore" title="Backup & Cloud" className="glass glass-btn grid h-11 w-11 place-items-center rounded-full">
+                <CloudUpload size={20} className="relative z-10" />
+              </button>
+              <button
+                onClick={() => (locked ? lockedTap() : setStudentTarget({ batchId: batch.id, student: null }))}
+                aria-label="Add student"
+                className="glass glass-btn grid h-11 w-11 shrink-0 place-items-center rounded-full"
+              >
+                <Plus size={21} className="relative z-10" />
+              </button>
+            </div>
           </div>
 
           <div className="no-scrollbar -mx-4 mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-0.5 min-[400px]:gap-2">
@@ -476,18 +530,16 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
         defaultFee={state.defaultFee}
         exportJson={() => JSON.stringify(state)}
         onClose={() => setSettingsOpen(false)}
-        sync={syncInfo}
-        onSyncNow={() => { void sync.now() }}
         onSaveProfile={(pf) => ask(
           { title: 'Save settings?', lines: [`Name: ${pf.name}`, `Centre: ${pf.centre || '\u2014'}`, `Default fee for new batches: ${inr(pf.defaultFee)}`], confirmLabel: 'Yes, save' },
           () => {
-            renameTeacher(pf.name).then((t) => onTeacher({ ...t })).catch(() => say('Saved here — your name will sync when you are online'))
+            renameTeacher(pf.name).then((t) => onTeacher({ ...t })).catch(() => say('Saved here — your name will update in your account when you are online'))
             setCentre(pf.centre); setDefaultFee(pf.defaultFee); say('Settings saved')
           },
         )}
         onSignOut={onSignOut}
         onDeleteAccount={() => ask(
-          { title: 'Delete your account?', lines: ['Every batch, student, attendance mark and payment in this account will be deleted from the cloud and from this device.', 'There is no way back. Download a backup first if you may need it.'], confirmLabel: 'Yes, delete everything', danger: true },
+          { title: 'Delete your account?', lines: ['Every batch, student, attendance mark and payment will be deleted from this device and from your account, including its cloud backup.', 'There is no way back. Download a backup first if you may need it.'], confirmLabel: 'Yes, delete everything', danger: true },
           () => { deleteAccount(teacher.id).then(() => onSignOut()).catch((e) => say(e instanceof Error ? e.message : 'Could not delete the account')) },
         )}
         onImport={restore}
@@ -582,6 +634,7 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
         )}
       />
       {calSeen && <Suspense fallback={null}><CalendarSheet open={calOpen} batch={batch} date={date} marks={state.marks} locked={state.locked} onPick={setDate} onClose={() => setCalOpen(false)} /></Suspense>}
+      <BackupMenu open={backupOpen} busy={backupBusy} status={backupStatus} error={backupError} onClose={() => setBackupOpen(false)} onUpload={() => { void runUpload() }} onRestore={() => { void beginRestore() }} />
       <ConfirmDialog confirm={confirm} onCancel={() => setConfirm(null)} />
       <Toast message={toast} />
     </div>
@@ -589,17 +642,11 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
   )
 }
 
-function useSyncInfo(): SyncInfo {
-  const [info, setInfo] = useState<SyncInfo>(() => sync.info())
-  useEffect(() => sync.subscribe(setInfo), [])
-  return info
-}
-
-type Phase = 'boot' | 'auth' | 'sync' | 'ready'
+type Phase = 'boot' | 'auth' | 'ready'
 
 export default function App() {
-  // The teacher cached on this device lets the app open instantly from the local backup; the server is
-  // asked in the background and the cloud copy is merged in as soon as it arrives.
+  // A cached teacher opens the local workspace immediately; the Supabase session is verified in the
+  // background. There is no cloud document to pull or merge before the app can render.
   const cached = useMemo(() => cachedTeacher(), [])
   const [teacher, setTeacher] = useState<Teacher | null>(cached)
   const [phase, setPhase] = useState<Phase>(cached ? 'ready' : 'boot')
@@ -613,33 +660,24 @@ export default function App() {
       if (!t) {
         clearTeacherCache()
         setTeacher(null)
-        setNote('Your session ended. Sign in again — everything is still in your account.')
+        setNote('Your session ended. Sign in again. Data on this device is kept.')
         setPhase('auth')
         return
       }
-      sync.start(t.id)
-      if (!cached) setPhase('sync')
-      // A returning teacher never gets demo students invented for them: only a real cloud/local copy is shown.
-      try { await hydrate(t.id, seedJson(false, '')) } catch { /* no cloud reachable: the local backup keeps the app working */ }
-      if (!alive) return
+      initializeLocalData(t.id, seedJson(false, ''))
       setTeacher(t)
       setPhase('ready')
     })()
     return () => { alive = false }
   }, [cached])
 
-  const onAuth = (t: Teacher, seedJson?: string) => {
-    setPhase('sync')
-    void (async () => {
-      sync.start(t.id)
-      try { await hydrate(t.id, seedJson) } catch { /* offline: the local backup is enough to start */ }
-      setTeacher(t)
-      setPhase('ready')
-    })()
+  const onAuth = (t: Teacher, seed?: string) => {
+    initializeLocalData(t.id, seed)
+    setTeacher(t)
+    setPhase('ready')
   }
 
-  if (phase === 'boot') return <Shell><SyncGate label="Opening Coaching Sathi" /></Shell>
-  if (phase === 'sync') return <Shell><SyncGate label="Syncing your coaching data" /></Shell>
+  if (phase === 'boot') return <Shell><BootGate /></Shell>
   if (!teacher || phase === 'auth') return <Shell><AuthScreen onAuth={onAuth} note={note} /></Shell>
   return (
     <Shell>
@@ -648,13 +686,15 @@ export default function App() {
         teacher={teacher}
         onTeacher={setTeacher}
         onSignOut={() => {
-          void sync.now().finally(() => {
-            void signOut().finally(() => { sync.reset(); setTeacher(null); setNote('Signed out. Your data is safe in the cloud.'); setPhase('auth') })
-          })
+          void signOut().finally(() => { setTeacher(null); setNote('Signed out. Your data is still on this device.'); setPhase('auth') })
         }}
       />
     </Shell>
   )
+}
+
+function BootGate() {
+  return <div className="grid min-h-dvh place-items-center px-6 text-center text-[14px] text-white/70" role="status" aria-live="polite">Opening Coaching Sathi…</div>
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
