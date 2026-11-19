@@ -30,7 +30,8 @@ or downloads a JSON backup file.
 - **File backup & restore** — JSON export/import of a teacher's whole dataset (`src/lib/backup.ts`).
 - **Teacher accounts** — Supabase Auth handles email + password, session restore, password reset and
   the profile name. One device keeps each teacher's workspace under its own `coachdesk:data:<userId>`
-  key; no background sync or merge runs (`src/lib/auth.ts`).
+  key; no background sync or merge runs (`src/lib/auth.ts`). Deleting the account requires typing
+  `DELETE` and erases the profile, workspace, legacy rows and cloud backup from the device and Supabase.
 - **Installable PWA** — manifest, maskable icons and service worker (`public/`).
 
 ## Getting started
@@ -45,7 +46,7 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Vite dev server (binds to all interfaces, accepts proxied preview hosts) |
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
-| `npm test` | Vitest suite (happy-dom), 327 tests across 22 files |
+| `npm test` | Vitest suite (happy-dom), 329 tests across 23 files |
 | `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
@@ -121,7 +122,7 @@ feather, then 2 % breathing room and a 4× Lanczos downscale with a light unshar
   rules keep icon bytes for up to a year, so re-uploading different pixels to the *same* URL is
   invisible to anyone who has visited before — even after uninstalling the PWA. Bumping the suffix
   gives every release brand-new URLs, which is why those files can be cached `immutable`.
-  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v17`).
+  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v18`).
 
 ## Manual Backup &amp; Restore (Supabase)
 
@@ -137,7 +138,7 @@ snapshot for moving data between devices.
 | `save_my_backup(doc, client)` | the only write path: `user_id` comes from `auth.uid()`, upsert completely overwrites the old copy |
 | `read_my_backup()` | the only read path: no user-id argument, so a teacher cannot request another teacher's row |
 | `public.app_state`, `sync_log`, SQL views | kept readable for history/reporting; `push_state` and authenticated writes to `app_state` are revoked |
-| `delete_me()` | deletes the auth user, which cascades to the profile, old state and cloud backup |
+| `delete_me()` | requires the verified `auth.uid()`, then explicitly deletes the cloud backup, sync log, old state, profile and auth user; all FKs also cascade |
 | `email_taken()` | one mailbox = one account, even across Gmail dots / `+tags` |
 
 `cloud_backups` has row-level security enabled. Its single `ALL` policy is
@@ -168,8 +169,9 @@ the local workspace on the device. Use Upload Backup before switching devices, t
 Overwrite there.
 
 **Setup**: run the migrations in `supabase/migrations/` (SQL editor or `supabase db push`), including
-`20261119150845_manual_cloud_backups.sql` and
-`20261119152547_revoke_app_state_client_writes.sql`, then set `VITE_SUPABASE_URL` and
+`20261119150845_manual_cloud_backups.sql`,
+`20261119152547_revoke_app_state_client_writes.sql` and
+`20261119165932_delete_account_wipe_all_data.sql`, then set `VITE_SUPABASE_URL` and
 `VITE_SUPABASE_ANON_KEY` (see `.env.example`; both are public values). Vercel already has them for
 production, preview and development. No additional environment variables are required.
 

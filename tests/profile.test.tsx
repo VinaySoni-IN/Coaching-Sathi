@@ -10,7 +10,7 @@ import { isDob, isPhoto, ageOf, sanitizeState, rebuild, byPaidOrder } from '../s
 import { attendanceRates, rateLabel } from '../src/lib/attendance'
 import { statement, studentRows, monthTotals } from '../src/lib/accounts'
 import { cachedTeacher, changePassword, deleteAccount, renameTeacher, restoreSession, signIn, signOut, signUp } from '../src/lib/auth'
-import { expireFakeSession } from './fakeCloud'
+import { expireFakeSession, fakeBackupFor, seedFakeBackup } from './fakeCloud'
 import { DEFAULT_TEMPLATES } from '../src/lib/wa'
 import { makeState, batch, stu, tx, R, NOW } from './helpers'
 import type { State, Student } from '../src/lib/store'
@@ -255,11 +255,13 @@ describe('Staying signed in (AU) — cloud session', () => {
     expect(cachedTeacher()?.id).toBe('ghost')          // used only for the first paint
     await expect(restoreSession()).resolves.toBeNull() // ...and dropped when no session exists
   })
-  it('AU-05 deleting the account removes the account, the data and the local copy', async () => {
+  it('AU-05 deleting the account removes the account, its cloud backup, the data and the local copy', async () => {
     const t = await signUp('Priya', 'priya.sharma@gmail.com', 'secret1', '{}')
     localStorage.setItem(`coachdesk:data:${t.id}`, JSON.stringify({ v: 3, batches: [] }))
+    seedFakeBackup(t.id, { app: 'coaching-sathi', kind: 'manual-cloud-backup' })
     await deleteAccount(t.id)
     expect(localStorage.getItem(`coachdesk:data:${t.id}`)).toBeNull()
+    expect(fakeBackupFor(t.id)).toBeNull()
     expect(cachedTeacher()).toBeNull()
     await expect(restoreSession()).resolves.toBeNull()
     await expect(signIn('priya.sharma@gmail.com', 'secret1')).rejects.toThrow(/incorrect/)

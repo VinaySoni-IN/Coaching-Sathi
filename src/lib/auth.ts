@@ -140,7 +140,8 @@ export async function renameTeacher(name: string): Promise<Teacher> {
   return teacher
 }
 
-/** Removes the account; the auth-user cascade also drops its profile and cloud backup. */
+/** Permanently removes the auth user and every row owned by it (profile, old state, sync log and cloud backup),
+ *  then erases this device's local copy of the workspace. */
 export async function deleteAccount(teacherId: string): Promise<void> {
   const { error } = await sb().rpc('delete_me')
   if (error) throw new Error(cloudMessage(error, 'Could not delete the account. Try again.'))
