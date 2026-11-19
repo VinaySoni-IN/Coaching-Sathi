@@ -539,7 +539,10 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
         )}
         onSignOut={onSignOut}
         onDeleteAccount={() => ask(
-          { title: 'Delete your account?', lines: ['Every batch, student, attendance mark and payment will be deleted from this device and from your account, including its cloud backup.', 'There is no way back. Download a backup first if you may need it.'], confirmLabel: 'Yes, delete everything', danger: true },
+          { title: 'Delete your account?', lines: [
+            'This permanently erases your profile, students, attendance, fees, settings and cloud backup from this device and the database.',
+            'Type DELETE below to confirm. This cannot be undone.',
+          ], confirmLabel: 'Delete account', danger: true, requireText: 'DELETE' },
           () => { deleteAccount(teacher.id).then(() => onSignOut()).catch((e) => say(e instanceof Error ? e.message : 'Could not delete the account')) },
         )}
         onImport={restore}

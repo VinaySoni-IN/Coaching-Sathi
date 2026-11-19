@@ -1,5 +1,6 @@
 -- "Delete account & data" from the app.
--- Removing the auth user cascades to profiles -> app_state -> sync_log, so nothing is left behind.
+-- Removing the auth user cascades to profiles -> app_state -> sync_log (and later cloud_backups), so nothing is left behind.
+-- See 20261119165932_delete_account_wipe_all_data.sql for the explicit full-wipe version.
 create or replace function public.delete_me()
 returns void language plpgsql security definer set search_path = public, auth as $$
 begin

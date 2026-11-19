@@ -114,7 +114,7 @@ export default function SettingsSheet(p: Props) {
 
               <div className="my-6 h-px bg-white/12" />
               <button onClick={p.onSignOut} className="glass glass-btn flex h-13 w-full items-center justify-center gap-2 rounded-full py-3.5 text-[15px] font-semibold"><LogOut size={18} className="relative z-10" /><span className="relative z-10">Sign out</span></button>
-              <button onClick={p.onDeleteAccount} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[13.5px] font-medium text-[#ff9aa8]"><Trash2 size={15} /> Delete account &amp; data</button>
+              <button onClick={p.onDeleteAccount} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-full font-display text-[13px] font-medium tracking-tight text-[#ff9aa8]"><Trash2 size={15} /> Delete profile &amp; all data</button>
             </div>
           </motion.div>
         </motion.div>

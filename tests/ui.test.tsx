@@ -49,6 +49,27 @@ describe('Confirm dialog (UI)', () => {
     fireEvent.click(yes); fireEvent.click(yes); fireEvent.click(yes)
     expect(runs).toBe(1)
   })
+
+  it('UI-02 destructive actions stay locked until DELETE is typed exactly', () => {
+    let runs = 0
+    function Host() {
+      const [c, setC] = useState<Confirm | null>(null)
+      return (<><button onClick={() => setC({ title: 'Delete your account?', lines: ['This cannot be undone.'], confirmLabel: 'Delete account', danger: true, requireText: 'DELETE', run: () => { runs++; setC(null) } })}>open</button><ConfirmDialog confirm={c} onCancel={() => setC(null)} /></>)
+    }
+    render(<Host />)
+    fireEvent.click(screen.getByText('open'))
+    const confirm = screen.getByRole('button', { name: 'Delete account' }) as HTMLButtonElement
+    const input = screen.getByRole('textbox', { name: 'Type DELETE to confirm' }) as HTMLInputElement
+    expect(confirm.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: 'DELET' } })
+    expect(confirm.disabled).toBe(true)
+    expect(runs).toBe(0)
+    fireEvent.change(input, { target: { value: 'delete' } }) // normalised to uppercase in the UI
+    expect(input.value).toBe('DELETE')
+    expect(confirm.disabled).toBe(false)
+    fireEvent.click(confirm)
+    expect(runs).toBe(1)
+  })
 })
 
 describe('Payment sheet (UI)', () => {
