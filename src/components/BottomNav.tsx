@@ -1,9 +1,10 @@
 import { motion } from 'framer-motion'
-import { CalendarCheck2, IndianRupee, Users } from 'lucide-react'
+import { CalendarCheck2, IndianRupee, Radio, Users } from 'lucide-react'
 
-export type Page = 'attendance' | 'fees' | 'students'
+export type Page = 'hub' | 'attendance' | 'fees' | 'students'
 
-const items: { id: Page; label: string; icon: typeof Users }[] = [
+const items: { id: Page; label: string; ariaLabel?: string; icon: typeof Users }[] = [
+  { id: 'hub', label: 'Hub', ariaLabel: 'Student Hub', icon: Radio },
   { id: 'attendance', label: 'Present', icon: CalendarCheck2 },
   { id: 'fees', label: 'Fees', icon: IndianRupee },
   { id: 'students', label: 'Students', icon: Users },
@@ -17,7 +18,7 @@ export default function BottomNav({ page, onPage }: { page: Page; onPage: (p: Pa
           const active = page === it.id
           const Icon = it.icon
           return (
-            <button key={it.id} onClick={() => onPage(it.id)} aria-current={active ? 'page' : undefined} className="relative flex h-full flex-1 flex-col items-center justify-center gap-0.5 rounded-full">
+            <button key={it.id} onClick={() => onPage(it.id)} aria-label={it.ariaLabel} aria-current={active ? 'page' : undefined} className="relative flex h-full flex-1 flex-col items-center justify-center gap-0.5 rounded-full">
               {active && <motion.span layoutId="main-lens" className="lens absolute inset-0 rounded-full" transition={{ type: 'spring', stiffness: 420, damping: 32 }} />}
               <span className="relative z-10 flex flex-col items-center gap-0.5">
                 <Icon size={21} strokeWidth={active ? 2.4 : 1.9} className={active ? 'text-white' : 'text-white/70'} />

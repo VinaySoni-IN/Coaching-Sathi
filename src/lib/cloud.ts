@@ -1,11 +1,13 @@
 /* Supabase client. Accounts live in Supabase Auth, but the workspace data is local-first: the browser is
-   the source of truth and the cloud is only touched by an explicit manual Backup & Restore action.
-   Nothing here runs at import time, so the app still boots (and the whole test suite still runs) when the
-   two VITE_ variables are absent — every cloud call then fails with a clear message. */
+   the source of truth and the cloud is only touched by explicit actions such as Backup & Restore and the
+   Student Hub Manager. The checked-in public config is shared by the root app and student-hub/ so both
+   use the same backend on static hosts; VITE_ variables can override it for a different project. */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import publicCloudConfig from '../../student-hub/config.json'
 
-const url = (import.meta.env?.VITE_SUPABASE_URL ?? '').trim()
-const anonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '').trim()
+const fromEnv = (value: string | undefined) => (value ?? '').trim()
+const url = fromEnv(import.meta.env?.VITE_SUPABASE_URL) || publicCloudConfig.supabaseUrl.trim()
+const anonKey = fromEnv(import.meta.env?.VITE_SUPABASE_ANON_KEY) || publicCloudConfig.supabaseAnonKey.trim()
 
 let client: SupabaseClient | null = null
 
