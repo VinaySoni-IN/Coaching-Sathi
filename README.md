@@ -7,7 +7,8 @@ track monthly fees, take payments, send WhatsApp messages to parents, and export
 
 Workspace data is stored on the device (`localStorage`) and is the source of truth. Supabase Auth owns
 teacher accounts; workspace data leaves the phone only when the teacher explicitly uploads a cloud backup
-or downloads a JSON backup file.
+or downloads a JSON backup file. The Student Hub's live meeting state and teacher-uploaded notes are
+separate, purpose-built Supabase tables with row-level security.
 
 ## Features
 
@@ -32,6 +33,13 @@ or downloads a JSON backup file.
   the profile name. One device keeps each teacher's workspace under its own `coachdesk:data:<userId>`
   key; no background sync or merge runs (`src/lib/auth.ts`). Deleting the account requires typing
   `DELETE` and erases the profile, workspace, legacy rows and cloud backup from the device and Supabase.
+- **Student Hub Manager** — the new first (far-left) Teacher App icon controls the live class topic/URL,
+  switches the class ON/OFF in Supabase, uploads files/PDFs, links and text notes with subject/title tags,
+  reviews or removes previous uploads, and copies the `./student-hub/` link
+  (`src/components/StudentHubManager.tsx`, `src/lib/studentHub.ts`).
+- **Student Portal** — `student-hub/index.html` is a standalone, read-only, single-page portal: a prominent
+  real-time Live Meeting / Class Preview card at the top, followed by filterable, viewable and downloadable
+  teacher materials. It uses relative CSS/JS/Supabase-client paths and an anonymous SELECT-only client.
 - **Installable PWA** — manifest, maskable icons and service worker (`public/`).
 
 ## Getting started
@@ -46,7 +54,7 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Vite dev server (binds to all interfaces, accepts proxied preview hosts) |
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
-| `npm test` | Vitest suite (happy-dom), 329 tests across 23 files |
+| `npm test` | Vitest suite (happy-dom), 335 tests across 24 files |
 | `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
@@ -54,9 +62,10 @@ npm run dev        # http://localhost:5173
 ```
 src/
   App.tsx            shell, routing between pages, all the confirm/toast orchestration
-  components/        screens, bottom sheets and the BackupMenu popup
+  components/        screens, bottom sheets, BackupMenu and StudentHubManager
   lib/
     store.ts         persisted state + useAttendance hook
+    studentHub.ts   live meeting / notes helpers for the authenticated Teacher App
     ledger.ts        fee steps, marks, derivation/sanitising of saved state
     accounts.ts      statements, outstanding, ageing
     payments.ts      receipts, allocation, discounts, charges, reversals
@@ -67,6 +76,7 @@ src/
     cloudBackup.ts   explicit snapshot upload / fetch / local overwrite
     money.ts, phone.ts, email.ts, backup.ts, photo.ts, …
 public/              manifest, app icons + favicon, service worker
+student-hub/         standalone Student Portal: index.html, styles.css, portal.js, config.json, vendor/supabase.js
 tests/               Vitest suites (unit + component + E2E-style flows)
 ```
 
@@ -77,7 +87,11 @@ tests/               Vitest suites (unit + component + E2E-style flows)
 - `xlsx` is installed from the npm registry (`^0.18.5`) rather than the SheetJS CDN tarball so
   `npm ci` works in environments that can't reach `cdn.sheetjs.com`.
 - All asset URLs are relative (`base: './'`) and the service worker caches with relative paths, so the
-  build works from a domain root *or* a sub-path without changes.
+  build works from a domain root *or* a sub-path without changes. The Student Portal uses only relative
+  paths too, and the service worker deliberately leaves `/student-hub/` to the network.
+- `student-hub/config.json` contains the same **public** Supabase URL and anon key used by the Teacher
+  App. `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` override it when pointing both apps at another
+  project. RLS, not the anon key, protects writes.
 - CI (`.github/workflows/ci.yml`) runs lint + tests + build on every push to `main` and every PR.
 
 ## Branding & app icons
@@ -122,7 +136,7 @@ feather, then 2 % breathing room and a 4× Lanczos downscale with a light unshar
   rules keep icon bytes for up to a year, so re-uploading different pixels to the *same* URL is
   invisible to anyone who has visited before — even after uninstalling the PWA. Bumping the suffix
   gives every release brand-new URLs, which is why those files can be cached `immutable`.
-  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v18`).
+  Changing icons = new suffix + `VERSION` bump in `public/sw.js` (currently `coachsathi-v19`).
 
 ## Manual Backup &amp; Restore (Supabase)
 
@@ -170,10 +184,45 @@ Overwrite there.
 
 **Setup**: run the migrations in `supabase/migrations/` (SQL editor or `supabase db push`), including
 `20261119150845_manual_cloud_backups.sql`,
-`20261119152547_revoke_app_state_client_writes.sql` and
-`20261119165932_delete_account_wipe_all_data.sql`, then set `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY` (see `.env.example`; both are public values). Vercel already has them for
-production, preview and development. No additional environment variables are required.
+`20261119152547_revoke_app_state_client_writes.sql`,
+`20261119165932_delete_account_wipe_all_data.sql`,
+`20261120123502_student_hub_live_meeting_notes.sql` and
+`20261120125627_student_hub_explicit_anon_deny.sql`. The public defaults in
+`student-hub/config.json` are shared by both apps, so no environment variables are required for the
+live project. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` only to override them (see
+`.env.example`; both are public values). Vercel already has them for production, preview and
+development. The GitHub Pages redirect allow list includes `https://vinaysoni-in.github.io/**`; add
+any custom Pages domain to Supabase Auth → URL Configuration as well.
+
+## Student Hub
+
+- **Teacher App** — the new far-left **Hub** icon opens Student Hub Manager. The original Present, Fees and
+  Students icons keep their positions and the default attendance landing screen is unchanged.
+- **Live control** — `set_my_live_meeting` upserts one row per teacher from `auth.uid()`. The portal's
+  realtime subscription (plus a 15-second polling fallback) updates the pulsing badge and Join Now button.
+- **Materials** — files/PDFs go to the public `student_notes` Storage bucket under `<auth uid>/…`. Links,
+  text notes and file metadata live in `public.student_notes`. `save_my_student_note` and
+  `delete_my_student_note` are authenticated-only RPCs; the portal never sees a teacher session.
+- **RLS** — `anon` and `authenticated` get `SELECT` on `public.live_meetings` and `public.student_notes`.
+  Direct client writes are revoked; explicit deny policies also block anonymous writes on the Hub tables
+  and Storage objects. Only authenticated teachers can execute the write RPCs or write their own
+  Storage folder. `delete_me()` also erases Student Hub rows/files on account deletion.
+
+## Deploying to GitHub Pages
+
+`.github/workflows/pages.yml` builds on pushes to `main`, uploads `dist/`, and deploys with
+`actions/deploy-pages@v4`. In repository Settings → Pages, choose **GitHub Actions** as the source.
+No repository secrets are needed: `npm run build` uses the public defaults in
+`student-hub/config.json`, and the Vite `copy-student-hub` plugin copies the standalone portal into
+`dist/student-hub/`.
+
+| Page | URL |
+| --- | --- |
+| Teacher App | `https://vinaysoni-in.github.io/Coaching-Sathi/` |
+| Student Portal | `https://vinaysoni-in.github.io/Coaching-Sathi/student-hub/` |
+
+Both paths work from a repository sub-path because every local asset is relative. If you attach a
+custom domain, add it to the Supabase Auth redirect allow list.
 
 ## Deploying to Vercel
 
@@ -185,7 +234,7 @@ production, preview and development. No additional environment variables are req
 | Install command | `npm ci` |
 | Build command | `npm run build` |
 | Output directory | `dist` |
-| Rewrites | all non-`/assets/` paths → `/index.html` (SPA fallback) |
+| Rewrites | all non-`/assets/` and non-`/student-hub/` paths → `/index.html` (SPA fallback); `/student-hub` → `/student-hub/index.html` |
 | Headers | `sw.js` and the manifest are revalidated on every load; `/assets/*` is cached immutably; `nosniff` + `no-referrer` + a restrictive permissions policy |
 
 **Option A — dashboard:** [vercel.com/new](https://vercel.com/new) → *Import Git Repository* →

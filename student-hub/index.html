@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Coaching Sathi — Student Hub</title>
+    <meta name="description" content="Live class preview and teacher-shared notes for Coaching Sathi students." />
+    <meta name="theme-color" content="#0b0b0c" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span></div>
+
+    <main class="shell">
+      <section id="live-card" class="glass live-card" aria-labelledby="live-title" aria-live="polite">
+        <div class="brand-row">
+          <span class="brand-mark" aria-hidden="true">CS</span>
+          <div class="brand-copy">
+            <span class="brand-name">Coaching Sathi</span>
+            <span class="brand-sub">Student Hub</span>
+          </div>
+          <span id="sync-label" class="sync-label">Checking for updates…</span>
+        </div>
+
+        <p class="eyebrow">Your classroom, right here</p>
+        <h1 id="live-title">Live Meeting / Class Preview</h1>
+        <div id="live-content" class="live-content">
+          <div class="loading-line"><span class="spinner" aria-hidden="true"></span> Checking for a live class…</div>
+        </div>
+        <div id="sync-banner" class="sync-banner" role="alert" hidden></div>
+      </section>
+
+      <section class="materials" aria-labelledby="materials-title">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Directly from your teacher</p>
+            <h2 id="materials-title">Notes &amp; study materials</h2>
+          </div>
+          <span id="notes-count" class="count-pill">Loading…</span>
+        </div>
+
+        <div class="glass toolbar" aria-label="Filter study materials">
+          <label class="field search-field">
+            <span class="sr-only">Search notes</span>
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="search" type="search" autocomplete="off" placeholder="Search by title or subject" />
+          </label>
+          <label class="field">
+            <span class="sr-only">Filter by subject</span>
+            <select id="subject-filter" aria-label="Filter by subject">
+              <option value="all">All subjects</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="sr-only">Filter by type</span>
+            <select id="kind-filter" aria-label="Filter by type">
+              <option value="all">All types</option>
+              <option value="file">Files / PDFs</option>
+              <option value="link">Links</option>
+              <option value="text">Text notes</option>
+            </select>
+          </label>
+        </div>
+
+        <p id="notes-summary" class="notes-summary" aria-live="polite"></p>
+        <div id="notes-list" class="notes-list" aria-live="polite">
+          <div class="glass empty-card"><span class="spinner" aria-hidden="true"></span> Loading study materials…</div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span>Read-only Student Hub · Coaching Sathi</span>
+        <span>Live status and notes come directly from Supabase.</span>
+      </footer>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <!-- Relative paths only: this page works from /student-hub/ on GitHub Pages and from dist/student-hub/ on Vercel. -->
+    <script src="./vendor/supabase.js"></script>
+    <script type="module" src="./portal.js"></script>
+  </body>
+</html>

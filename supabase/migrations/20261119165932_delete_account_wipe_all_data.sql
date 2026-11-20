@@ -1,6 +1,7 @@
 -- Applied to the live project as migration 20261119165932 (delete_account_wipe_all_data).
 -- Account deletion must erase every row owned by the teacher, not just the auth user. The foreign keys
 -- cascade; these explicit deletes make the wipe clear and robust if a future FK is ever changed.
+-- Student Hub rows and storage objects are added to this wipe in 20261120123502_student_hub_live_meeting_notes.sql.
 
 create or replace function public.delete_me()
 returns void language plpgsql security definer set search_path = public, auth as $$

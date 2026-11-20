@@ -14,6 +14,7 @@ import { applyCloudBackupLocally, fetchCloudBackup, initializeLocalData, uploadC
 import BackupMenu from './components/BackupMenu'
 import type { BackupBusy } from './components/BackupMenu'
 import StudentsPage from './components/StudentsPage'
+import StudentHubManager from './components/StudentHubManager'
 import StudentProfile from './components/StudentProfile'
 import AddParentSheet from './components/AddParentSheet'
 import MessageSheet from './components/MessageSheet'
@@ -237,8 +238,9 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
       <BottomNav page={page} onPage={setPage} />
 
       <main className="relative z-10 mx-auto w-full max-w-md px-4 pb-52 pt-[calc(max(env(safe-area-inset-top),12px)+(var(--top-extra)))]" style={{ ['--top-extra' as string]: page === 'attendance' ? '76px' : '20px' }}>
+        {page === 'hub' && <StudentHubManager teacher={teacher} say={say} ask={ask} />}
         {page === 'fees' && !noBatch && <FeesPage state={state} teacher={teacher} batch={batch} onBatch={setBatchId} month={month} onMonth={shiftMonth} onSetMonth={setMonth} canNext={monthKey(month) < monthKey(new Date())} onEditRate={(id) => { setBatchId(id); setRateOpen(true) }} onPay={setPaying} onRestore={restore} onSent={markSent} onAddParent={(st, then) => setParentAsk({ batchId: batch.id, sid: st.id, then })} say={say} />}
-        {noBatch && page !== 'students' && (
+        {noBatch && (page === 'attendance' || page === 'fees') && (
           <div className="glass glass-deep mt-6 rounded-[32px] px-6 py-12 text-center">
             <p className="relative z-10 font-display text-[24px] font-semibold">No batches yet</p>
             <p className="relative z-10 mx-auto mt-1 max-w-[260px] text-[14px] text-white/75">Create a batch and add students to start taking attendance and fees.</p>

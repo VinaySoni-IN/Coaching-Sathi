@@ -6,7 +6,11 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!assets/).*)",
+      "source": "/student-hub",
+      "destination": "/student-hub/index.html"
+    },
+    {
+      "source": "/((?!assets/|student-hub/).*)",
       "destination": "/index.html"
     }
   ],
@@ -38,6 +42,15 @@
         {
           "key": "Service-Worker-Allowed",
           "value": "/"
+        }
+      ]
+    },
+    {
+      "source": "/student-hub/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
         }
       ]
     },

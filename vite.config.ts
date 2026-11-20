@@ -1,3 +1,5 @@
+import { cp } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { defineConfig, loadEnv } from 'vite'
 import type { PluginOption, UserConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -6,6 +8,15 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }): Promise<UserConfig> => {
   const plugins: PluginOption[] = [react(), tailwindcss()];
+  // The Student Portal is a standalone static page in the subfolder. Copy it beside the built Teacher
+  // App so `/student-hub/` works on GitHub Pages, Vercel and `vite preview` with relative asset paths.
+  plugins.push({
+    name: 'copy-student-hub',
+    apply: 'build',
+    async closeBundle() {
+      await cp(resolve(process.cwd(), 'student-hub'), resolve(process.cwd(), 'dist/student-hub'), { recursive: true, force: true });
+    },
+  });
   try {
     // Optional local tooling (git-ignored, absent in a clean checkout): adds data-source
     // attributes to DOM nodes for the visual editor. Never required to build or deploy.

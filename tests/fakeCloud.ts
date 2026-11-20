@@ -1,19 +1,46 @@
-/* An in-memory stand-in for the Supabase client, so the whole suite runs the real account and manual
-   cloud-backup code paths without a network. It mirrors only the pieces the app actually calls:
-   auth (session, sign-up, sign-in, update), `profiles`, `cloud_backups`, and the RPCs. */
+/* An in-memory stand-in for the Supabase client, so the whole suite runs the real account, manual
+   cloud-backup and Student Hub code paths without a network. It mirrors only the pieces the app calls:
+   auth, profiles, backups, Student Hub tables, storage and the authenticated RPCs. */
 import { setCloudClient } from '../src/lib/cloud'
 import { TEACHER_CACHE } from '../src/lib/auth'
 
 export interface FakeUser { id: string; email: string; password: string; name: string }
 interface ProfileRow { id: string; name: string; email: string; email_canonical?: string }
 interface BackupRow { doc: unknown; client_id: string | null; updated_at: string }
+interface MeetingRow {
+  teacher_id: string
+  topic: string
+  meeting_url: string
+  is_live: boolean
+  created_at: string
+  updated_at: string
+}
+interface NoteRow {
+  id: string
+  teacher_id: string
+  title: string
+  subject: string
+  kind: 'file' | 'link' | 'text'
+  body: string
+  file_path: string | null
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  created_at: string
+  updated_at: string
+}
+interface StoredFile { path: string; name: string; size: number; type: string }
 
 const db = {
   users: [] as FakeUser[],
   session: null as string | null,
   profiles: new Map<string, ProfileRow>(),
   backups: new Map<string, BackupRow>(),
+  meetings: new Map<string, MeetingRow>(),
+  notes: [] as NoteRow[],
+  files: new Map<string, StoredFile>(),
   seq: 0,
+  noteSeq: 0,
   /** Set once the test drives auth explicitly; until then a seeded teacher cache stands in for the session. */
   touched: false,
 }
@@ -23,7 +50,11 @@ export function resetFakeCloud() {
   db.session = null
   db.profiles.clear()
   db.backups.clear()
+  db.meetings.clear()
+  db.notes = []
+  db.files.clear()
   db.seq = 0
+  db.noteSeq = 0
   db.touched = false
 }
 
@@ -56,14 +87,36 @@ type Res<T> = { data: T; error: null }
 
 /* --- tiny query builder: only the shapes the app uses --- */
 function from(table: string) {
-  const filter: { id?: string; user_id?: string } = {}
+  const filter: { id?: string; user_id?: string; teacher_id?: string; is_live?: boolean } = {}
+  let maxRows: number | null = null
+  const resolveRows = (): Res<unknown> => {
+    const me = currentUser()
+    if (!me) return { data: [], error: null }
+    if (table === 'live_meetings') {
+      const rows = [...db.meetings.values()]
+        .filter((row) => row.teacher_id === me.id && (filter.is_live === undefined || row.is_live === filter.is_live))
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+      return { data: maxRows === null ? rows : rows.slice(0, maxRows), error: null }
+    }
+    if (table === 'student_notes') {
+      const rows = db.notes
+        .filter((row) => row.teacher_id === me.id && (!filter.teacher_id || filter.teacher_id === me.id))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      return { data: maxRows === null ? rows : rows.slice(0, maxRows), error: null }
+    }
+    return { data: [], error: null }
+  }
   const builder = {
     select: () => builder,
-    eq: (column: string, value: string) => {
-      if (column === 'id') filter.id = value
-      if (column === 'user_id') filter.user_id = value
+    eq: (column: string, value: string | boolean) => {
+      if (column === 'id') filter.id = String(value)
+      if (column === 'user_id') filter.user_id = String(value)
+      if (column === 'teacher_id') filter.teacher_id = String(value)
+      if (column === 'is_live') filter.is_live = value === true
       return builder
     },
+    order: () => builder,
+    limit: (count: number) => { maxRows = count; return builder },
     maybeSingle: async (): Promise<Res<unknown>> => {
       const me = currentUser()
       if (!me) return { data: null, error: null }
@@ -77,15 +130,44 @@ function from(table: string) {
         const row = db.backups.get(me.id) ?? null
         return { data: row ? { doc: row.doc, updated_at: row.updated_at } : null, error: null }
       }
+      if (table === 'live_meetings') {
+        const uid = filter.teacher_id ?? me.id
+        if (uid !== me.id) return { data: null, error: null }
+        const row = db.meetings.get(uid) ?? null
+        if (filter.is_live === true && row && !row.is_live) return { data: null, error: null }
+        return { data: row, error: null }
+      }
       return { data: null, error: null }
     },
     upsert: async (row: ProfileRow): Promise<Res<null>> => {
       db.profiles.set(row.id, { ...db.profiles.get(row.id), ...row })
       return { data: null, error: null }
     },
+    then: (onFulfilled?: ((value: Res<unknown>) => unknown) | null, onRejected?: ((reason: unknown) => unknown) | null) =>
+      Promise.resolve(resolveRows()).then(onFulfilled, onRejected),
   }
   return builder
 }
+
+const storageFrom = (bucket: string) => ({
+  upload: async (path: string, file: { name?: string; size?: number; type?: string }) => {
+    const me = currentUser()
+    if (!me || bucket !== 'student_notes' || !path.startsWith(`${me.id}/`)) return err('not allowed', '42501')
+    db.files.set(path, { path, name: file.name ?? 'note', size: file.size ?? 0, type: file.type ?? 'application/octet-stream' })
+    return { data: { path }, error: null }
+  },
+  remove: async (paths: string[]) => {
+    const me = currentUser()
+    if (!me) return err('not authenticated', '28000')
+    paths.forEach((path) => { if (path.startsWith(`${me.id}/`)) db.files.delete(path) })
+    return { data: [], error: null }
+  },
+  getPublicUrl: (path: string, options?: { download?: string | boolean }) => ({
+    data: {
+      publicUrl: `https://fake.supabase.test/storage/v1/object/public/${bucket}/${path}${options?.download ? `?download=${encodeURIComponent(String(options.download))}` : ''}`,
+    },
+  }),
+})
 
 export const fakeCloud = {
   auth: {
@@ -126,6 +208,7 @@ export const fakeCloud = {
     resetPasswordForEmail: async () => ({ data: {}, error: null }),
   },
   from,
+  storage: { from: storageFrom },
   rpc: async (name: string, args: Record<string, unknown> = {}) => {
     const me = currentUser()
     if (!me) return err('not authenticated', '28000')
@@ -144,10 +227,73 @@ export const fakeCloud = {
       const row = db.backups.get(me.id)
       return { data: row ? [{ doc: row.doc, updated_at: row.updated_at }] : [], error: null }
     }
+    if (name === 'set_my_live_meeting') {
+      const topic = String(args.p_topic ?? '').trim()
+      const meetingUrl = String(args.p_meeting_url ?? '').trim()
+      const isLive = args.p_is_live === true
+      if (meetingUrl && !/^https?:\/\//i.test(meetingUrl)) return err('meeting link must start with http:// or https://', '22023')
+      if (isLive && (!topic || !meetingUrl)) return err('add a class title and meeting link before going live', '22023')
+      const stamp = new Date().toISOString()
+      const previous = db.meetings.get(me.id)
+      const row: MeetingRow = {
+        teacher_id: me.id,
+        topic,
+        meeting_url: meetingUrl,
+        is_live: isLive,
+        created_at: previous?.created_at ?? stamp,
+        updated_at: stamp,
+      }
+      db.meetings.set(me.id, row)
+      return { data: row, error: null }
+    }
+    if (name === 'save_my_student_note') {
+      const kind = String(args.p_kind ?? '').trim()
+      const title = String(args.p_title ?? '').trim()
+      const subject = String(args.p_subject ?? '').trim() || 'General'
+      const body = String(args.p_body ?? '')
+      const filePath = typeof args.p_file_path === 'string' && args.p_file_path ? args.p_file_path : null
+      const fileName = typeof args.p_file_name === 'string' && args.p_file_name ? args.p_file_name : null
+      const mimeType = typeof args.p_mime_type === 'string' && args.p_mime_type ? args.p_mime_type : null
+      const fileSize = typeof args.p_file_size === 'number' ? args.p_file_size : null
+      if (!['file', 'link', 'text'].includes(kind)) return err('unknown note type', '22023')
+      if (!title) return err('add a title', '22023')
+      if (kind === 'file') {
+        if (!filePath || !fileName || !filePath.startsWith(`${me.id}/`)) return err('choose a valid file', '22023')
+      }
+      if (kind === 'link' && !/^https?:\/\//i.test(body)) return err('paste a link beginning with http:// or https://', '22023')
+      if (kind === 'text' && !body.trim()) return err('write a note first', '22023')
+      const stamp = new Date().toISOString()
+      const row: NoteRow = {
+        id: `n${++db.noteSeq}`,
+        teacher_id: me.id,
+        title,
+        subject,
+        kind: kind as NoteRow['kind'],
+        body: kind === 'file' ? '' : body,
+        file_path: kind === 'file' ? filePath : null,
+        file_name: kind === 'file' ? fileName : null,
+        mime_type: kind === 'file' ? mimeType : null,
+        file_size: kind === 'file' ? fileSize : null,
+        created_at: stamp,
+        updated_at: stamp,
+      }
+      db.notes.push(row)
+      return { data: row, error: null }
+    }
+    if (name === 'delete_my_student_note') {
+      const index = db.notes.findIndex((note) => note.id === String(args.p_note_id) && note.teacher_id === me.id)
+      if (index < 0) return { data: false, error: null }
+      const [row] = db.notes.splice(index, 1)
+      if (row?.file_path) db.files.delete(row.file_path)
+      return { data: true, error: null }
+    }
     if (name === 'delete_me') {
       db.touched = true
       db.backups.delete(me.id)
       db.profiles.delete(me.id)
+      db.meetings.delete(me.id)
+      db.notes = db.notes.filter((note) => note.teacher_id !== me.id)
+      for (const path of [...db.files.keys()]) if (path.startsWith(`${me.id}/`)) db.files.delete(path)
       db.users = db.users.filter((u) => u.id !== me.id)
       db.session = null
       return { data: null, error: null }
@@ -179,7 +325,48 @@ export function seedFakeBackup(userId: string, doc: unknown, updatedAt = new Dat
   db.backups.set(userId, { doc, client_id: null, updated_at: updatedAt })
 }
 
+/** Seeds a teacher's Student Hub meeting. */
+export function seedFakeMeeting(userId: string, row: Partial<MeetingRow> = {}) {
+  const stamp = new Date().toISOString()
+  const meeting: MeetingRow = {
+    teacher_id: userId,
+    topic: '',
+    meeting_url: '',
+    is_live: false,
+    created_at: stamp,
+    updated_at: stamp,
+    ...row,
+  }
+  db.meetings.set(userId, meeting)
+  return meeting
+}
+
+/** Seeds a teacher's Student Hub note. */
+export function seedFakeStudentNote(userId: string, row: Partial<NoteRow> = {}) {
+  const stamp = new Date().toISOString()
+  const note: NoteRow = {
+    id: `n${++db.noteSeq}`,
+    teacher_id: userId,
+    title: 'Chapter notes',
+    subject: 'Physics',
+    kind: 'text',
+    body: 'Remember the formulas.',
+    file_path: null,
+    file_name: null,
+    mime_type: null,
+    file_size: null,
+    created_at: stamp,
+    updated_at: stamp,
+    ...row,
+  }
+  db.notes.push(note)
+  return note
+}
+
 export const fakeBackupFor = (userId: string) => db.backups.get(userId)?.doc ?? null
+export const fakeMeetingFor = (userId: string) => db.meetings.get(userId) ?? null
+export const fakeNotesFor = (userId: string) => db.notes.filter((note) => note.teacher_id === userId)
+export const fakeStorageFileCount = () => db.files.size
 
 /** Pretends the refresh token was revoked on the server (session gone, cache still on the device). */
 export function expireFakeSession() {
