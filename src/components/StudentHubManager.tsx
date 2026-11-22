@@ -27,6 +27,7 @@ import type { Teacher } from '../lib/auth'
 import { cloudMessage } from '../lib/cloud'
 import { cleanLine } from '../lib/sanitize'
 import type { Confirm } from './ConfirmDialog'
+import SelectField from './SelectField'
 import {
   copyToClipboard,
   createStudentFolder,
@@ -496,7 +497,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           <h1 className="font-display text-[31px] font-semibold leading-[1.05] tracking-tight">Student Hub Manager</h1>
           <p className="mt-1 text-[13px] text-white/65">Schedule classes and share study materials, organised by batch.</p>
         </div>
-        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${liveCount ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
+        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-full ${liveCount ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
           {liveCount ? <Radio size={22} /> : <WifiOff size={21} />}
         </div>
       </div>
@@ -512,9 +513,12 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       <div className={card}>
         <label className="block">
           <span className={label}>Batch Name</span>
-          <select aria-label="Batch Name" className={field} value={effectiveBatch} onChange={(e) => setSelectedBatch(e.target.value)}>
-            {batchOptions.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
+          <SelectField
+            ariaLabel="Batch Name"
+            value={effectiveBatch}
+            onChange={setSelectedBatch}
+            options={batchOptions.map((name) => ({ value: name, label: name }))}
+          />
         </label>
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-white/55">
           <Folder size={13} /> New meetings, folders and notes are tagged <strong className="text-white/80">{effectiveBatch}</strong>.
