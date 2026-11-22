@@ -137,10 +137,11 @@ describe('Student Hub Manager (SH)', () => {
     expect(expiry - start).toBe(90 * 60_000)
   })
 
-  it('SH-07 tags every folder and note with the selected Batch Name', async () => {
+  it('SH-07 tags every folder and note with the selected batch pill', async () => {
     await openHub()
-    fireEvent.change(screen.getByLabelText('Batch Name'), { target: { value: 'JEE Maths' } })
-    await waitFor(() => expect(screen.getByLabelText('Batch Name')).toHaveProperty('value', 'JEE Maths'))
+    const batchGroup = screen.getByRole('group', { name: 'Batch' })
+    fireEvent.click(within(batchGroup).getByRole('button', { name: 'JEE Maths' }))
+    await waitFor(() => expect(within(batchGroup).getByRole('button', { name: 'JEE Maths' }).getAttribute('aria-pressed')).toBe('true'))
 
     fireEvent.change(screen.getByLabelText('New folder name'), { target: { value: 'Algebra' } })
     fireEvent.click(screen.getByRole('button', { name: /Add folder/ }))

@@ -27,7 +27,6 @@ import type { Teacher } from '../lib/auth'
 import { cloudMessage } from '../lib/cloud'
 import { cleanLine } from '../lib/sanitize'
 import type { Confirm } from './ConfirmDialog'
-import SelectField from './SelectField'
 import {
   copyToClipboard,
   createStudentFolder,
@@ -491,16 +490,35 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
   return (
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-2">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <p className="flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[.14em] text-white/65"><GraduationCap size={13} /> {teacherName}</p>
-          <h1 className="font-display text-[31px] font-semibold leading-[1.05] tracking-tight">Student Hub Manager</h1>
-          <p className="mt-1 text-[13px] text-white/65">Schedule classes and share study materials, organised by batch.</p>
+      <header>
+        <p className="flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[.14em] text-white/65"><GraduationCap size={13} /> {teacherName}</p>
+        <h1 className="mt-0.5 font-display text-[30px] font-semibold leading-[1.06] tracking-tight sm:text-[32px]">Student Hub Manager</h1>
+        <p className="mt-1.5 text-[13px] leading-snug text-white/60">Schedule classes and share study materials, organised by batch.</p>
+
+        {/* One toolbar row: pick the batch everything is tagged with, and see live-class status at a glance. */}
+        <div className="mt-3 flex items-center gap-2">
+          <div role="group" aria-label="Batch" className="no-scrollbar -mx-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 py-0.5">
+            {batchOptions.map((name) => {
+              const active = name === effectiveBatch
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setSelectedBatch(name)}
+                  className={`glass-btn shrink-0 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 ${active ? 'lens text-white' : 'bg-white/7 text-white/65 ring-1 ring-white/12 hover:text-white/90'}`}
+                >
+                  <span className="relative z-10">{name}</span>
+                </button>
+              )
+            })}
+          </div>
+          <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold ring-1 ${liveCount ? 'bg-present/12 text-present ring-present/30' : 'bg-white/6 text-white/55 ring-white/12'}`}>
+            {liveCount ? <Radio size={13} /> : <WifiOff size={13} />}
+            {liveCount ? `Live now${liveCount > 1 ? ` · ${liveCount}` : ''}` : 'No live class'}
+          </span>
         </div>
-        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-full ${liveCount ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
-          {liveCount ? <Radio size={22} /> : <WifiOff size={21} />}
-        </div>
-      </div>
+      </header>
 
       {(status || error) && (
         <div className={`relative z-10 flex items-start gap-2 rounded-2xl px-4 py-3 text-[13px] ${error ? 'bg-absent/10 text-red-100 ring-1 ring-absent/30' : 'bg-present/10 text-present ring-1 ring-present/25'}`} role={error ? 'alert' : 'status'}>
@@ -508,22 +526,6 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           <span>{error ?? status}</span>
         </div>
       )}
-
-      {/* Batch selector — everything below is tagged with this exact batch name. */}
-      <div className={card}>
-        <label className="block">
-          <span className={label}>Batch Name</span>
-          <SelectField
-            ariaLabel="Batch Name"
-            value={effectiveBatch}
-            onChange={setSelectedBatch}
-            options={batchOptions.map((name) => ({ value: name, label: name }))}
-          />
-        </label>
-        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-white/55">
-          <Folder size={13} /> New meetings, folders and notes are tagged <strong className="text-white/80">{effectiveBatch}</strong>.
-        </p>
-      </div>
 
       {/* ---------------------------------------------------------------- schedule a class */}
       <div className={card}>
