@@ -238,7 +238,7 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
       <BottomNav page={page} onPage={setPage} />
 
       <main className="relative z-10 mx-auto w-full max-w-md px-4 pb-52 pt-[calc(max(env(safe-area-inset-top),12px)+(var(--top-extra)))]" style={{ ['--top-extra' as string]: page === 'attendance' ? '76px' : '20px' }}>
-        {page === 'hub' && <StudentHubManager teacher={teacher} say={say} ask={ask} />}
+        {page === 'hub' && <StudentHubManager teacher={teacher} batches={state.batches.map((b) => b.name)} initialBatchName={batch.id === '__none' ? '' : batch.name} say={say} ask={ask} />}
         {page === 'fees' && !noBatch && <FeesPage state={state} teacher={teacher} batch={batch} onBatch={setBatchId} month={month} onMonth={shiftMonth} onSetMonth={setMonth} canNext={monthKey(month) < monthKey(new Date())} onEditRate={(id) => { setBatchId(id); setRateOpen(true) }} onPay={setPaying} onRestore={restore} onSent={markSent} onAddParent={(st, then) => setParentAsk({ batchId: batch.id, sid: st.id, then })} say={say} />}
         {noBatch && (page === 'attendance' || page === 'fees') && (
           <div className="glass glass-deep mt-6 rounded-[32px] px-6 py-12 text-center">

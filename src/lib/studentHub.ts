@@ -1,18 +1,45 @@
-/* Student Hub data helpers. The Teacher App writes through authenticated RPCs; the static Student
-   Portal only ever performs read-only SELECTs. Both use the same shared Supabase client/config. */
+/* Student Hub data layer (Teacher App).
+   The Teacher App writes through authenticated, teacher-pinned RPCs; the static Student Portal only
+   ever performs read-only SELECTs / the read-only snapshot RPC. Both use the same public config.
+   All text is trimmed + control-character stripped before it reaches Supabase (see ./sanitize.ts). */
 import { sb } from './cloud'
+import { cleanBody, cleanLine, safeHttpUrl } from './sanitize'
+
+export { cleanBody, cleanLine, safeHttpUrl } from './sanitize'
 
 export const STUDENT_HUB_PATH = './student-hub/'
 export const STUDENT_NOTES_BUCKET = 'student_notes'
 export const MAX_NOTE_FILE_SIZE = 15 * 1024 * 1024
+export const DEFAULT_BATCH_NAME = 'General'
+export const DEFAULT_DURATION_MINUTES = 45
+export const MIN_DURATION_MINUTES = 1
+export const MAX_DURATION_MINUTES = 480
+export const MEETING_DURATION_PRESETS = [30, 45, 60] as const
+export const UNFILED_FOLDER = 'Unfiled'
 
 export type StudentNoteKind = 'file' | 'link' | 'text'
 
 export interface LiveMeeting {
   teacher_id: string
+  teacher_name: string
+  batch_name: string
   topic: string
   meeting_url: string
+  /** Generated column: always equal to meeting_url (the spec's `meeting_link`). */
+  meeting_link: string
   is_live: boolean
+  duration_minutes: number
+  expires_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StudentFolder {
+  id: string
+  teacher_id: string
+  teacher_name: string
+  batch_name: string
+  name: string
   created_at: string
   updated_at: string
 }
@@ -20,6 +47,10 @@ export interface LiveMeeting {
 export interface StudentNote {
   id: string
   teacher_id: string
+  teacher_name: string
+  batch_name: string
+  folder_id: string | null
+  folder_name: string | null
   title: string
   subject: string
   kind: StudentNoteKind
@@ -32,18 +63,24 @@ export interface StudentNote {
   updated_at: string
 }
 
+export interface MeetingInput {
+  topic: string
+  meeting_url: string
+  is_live: boolean
+  batchName: string
+  teacherName: string
+  durationMinutes: number
+}
+
 export interface NewStudentNote {
   kind: StudentNoteKind
   title: string
   subject: string
   body: string
   file: File | null
-}
-
-export interface MeetingInput {
-  topic: string
-  meeting_url: string
-  is_live: boolean
+  batchName: string
+  teacherName: string
+  folderName: string
 }
 
 /** Resolves against the current page, so it works at a domain root or under /<repo>/ on GitHub Pages. */
@@ -52,23 +89,37 @@ export function studentHubUrl(): string {
   return new URL(STUDENT_HUB_PATH, location.href).href
 }
 
-export function safeHttpUrl(raw: string): string | null {
-  const value = raw.trim()
-  if (!value) return null
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null
-  } catch {
-    return null
-  }
-}
-
 export function formatBytes(bytes: number | null): string {
   const size = Number(bytes ?? 0)
   if (!Number.isFinite(size) || size <= 0) return ''
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** Clamp any custom minute input into the DB-safe range. */
+export function normaliseDuration(value: number): number {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n)) return DEFAULT_DURATION_MINUTES
+  return Math.max(MIN_DURATION_MINUTES, Math.min(MAX_DURATION_MINUTES, n))
+}
+
+/** expires_at = now() + duration_minutes. Computed on the client and verified again by the RPC. */
+export function meetingExpiresAt(durationMinutes: number, now = Date.now()): string {
+  return new Date(now + normaliseDuration(durationMinutes) * 60_000).toISOString()
+}
+
+export function isMeetingActive(meeting: LiveMeeting | null, now = Date.now()): boolean {
+  if (!meeting || meeting.is_live !== true) return false
+  if (!safeHttpUrl(meeting.meeting_url)) return false
+  const expiry = Date.parse(meeting.expires_at ?? '')
+  return Number.isFinite(expiry) ? expiry > now : true
+}
+
+export function remainingMs(meeting: LiveMeeting | null, now = Date.now()): number {
+  if (!meeting?.expires_at) return 0
+  const expiry = Date.parse(meeting.expires_at)
+  return Number.isFinite(expiry) ? Math.max(0, expiry - now) : 0
 }
 
 export async function copyToClipboard(value: string): Promise<void> {
@@ -102,28 +153,69 @@ export async function fetchMyMeeting(teacherId: string): Promise<LiveMeeting | n
 }
 
 export async function saveMyMeeting(input: MeetingInput): Promise<LiveMeeting> {
-  const topic = input.topic.trim()
+  const topic = cleanLine(input.topic, 140)
   const meetingUrl = input.meeting_url.trim() ? safeHttpUrl(input.meeting_url) : null
   if (input.meeting_url.trim() && !meetingUrl) throw new Error('Enter a valid http:// or https:// meeting link.')
   if (input.is_live && (!topic || !meetingUrl)) throw new Error('Add a class title and meeting link before going live.')
-  const { data, error } = await sb().rpc('set_my_live_meeting', {
+  const duration = normaliseDuration(input.durationMinutes)
+  const { data, error } = await sb().rpc('set_my_batch_meeting', {
     p_topic: topic,
     p_meeting_url: meetingUrl ?? '',
     p_is_live: input.is_live,
+    p_batch_name: cleanLine(input.batchName, 80) || DEFAULT_BATCH_NAME,
+    p_teacher_name: cleanLine(input.teacherName, 120),
+    p_duration_minutes: duration,
+    // The DB recomputes/validates this from `now() + duration`, so clock skew cannot extend a class.
+    p_expires_at: meetingExpiresAt(duration),
   })
   if (error) throw error
   if (!data) throw new Error('The live meeting could not be saved. Try again.')
   return data as LiveMeeting
 }
 
-export async function fetchMyNotes(teacherId: string): Promise<StudentNote[]> {
+/** Folders are ALREADY scoped to the selected batch — no cross-batch rows can leak in. */
+export async function fetchMyFolders(teacherId: string, batchName: string): Promise<StudentFolder[]> {
   const { data, error } = await sb()
-    .from('student_notes')
+    .from('folders')
     .select('*')
     .eq('teacher_id', teacherId)
+    .eq('batch_name', cleanLine(batchName, 80) || DEFAULT_BATCH_NAME)
+    .order('name', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as StudentFolder[]
+}
+
+/** `notes` is the read-facing view: student_notes joined to its folder (both batch + teacher scoped). */
+export async function fetchMyNotes(teacherId: string, batchName: string): Promise<StudentNote[]> {
+  const batch = cleanLine(batchName, 80) || DEFAULT_BATCH_NAME
+  const { data, error } = await sb()
+    .from('notes')
+    .select('*')
+    .eq('teacher_id', teacherId)
+    .eq('batch_name', batch)
     .order('created_at', { ascending: false })
   if (error) throw error
-  return (data ?? []) as StudentNote[]
+  return ((data ?? []) as StudentNote[]).filter((note) => note.teacher_id === teacherId && note.batch_name === batch)
+}
+
+/** Creates (or reuses) a folder. The RPC pins teacher_id and requires a non-empty batch_name. */
+export async function createStudentFolder(batchName: string, teacherName: string, name: string): Promise<StudentFolder> {
+  const folderName = cleanLine(name, 120)
+  if (!folderName) throw new Error('Give the folder a name first.')
+  const { data, error } = await sb().rpc('save_my_folder', {
+    p_batch_name: cleanLine(batchName, 80) || DEFAULT_BATCH_NAME,
+    p_teacher_name: cleanLine(teacherName, 120),
+    p_name: folderName,
+  })
+  if (error) throw error
+  if (!data) throw new Error('The folder could not be created. Try again.')
+  return data as StudentFolder
+}
+
+export async function deleteStudentFolder(folderId: string): Promise<void> {
+  const { data, error } = await sb().rpc('delete_my_folder', { p_folder_id: folderId })
+  if (error) throw error
+  if (data !== true) throw new Error('This folder was already removed.')
 }
 
 function randomId(): string {
@@ -132,19 +224,26 @@ function randomId(): string {
 }
 
 function safeFileName(name: string): string {
-  return (name || 'note')
+  return cleanLine(name, 255)
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
     .replace(/\.\.+/g, '.')
     .slice(-120) || 'note'
 }
 
 export async function createStudentNote(teacherId: string, input: NewStudentNote): Promise<StudentNote> {
-  const title = input.title.trim()
-  const subject = input.subject.trim() || 'General'
-  const body = input.kind === 'file' ? '' : input.body.trim()
+  const title = cleanLine(input.title, 160)
+  const subject = cleanLine(input.subject, 80) || 'General'
+  const batchName = cleanLine(input.batchName, 80) || DEFAULT_BATCH_NAME
+  const teacherName = cleanLine(input.teacherName, 120)
+  const folderName = cleanLine(input.folderName, 120)
+  const body = input.kind === 'file'
+    ? ''
+    : input.kind === 'text'
+      ? cleanBody(input.body, 20000)
+      : cleanLine(input.body, 2000)
+
   if (!title) throw new Error('Add a title for this note.')
-  if (title.length > 160) throw new Error('Keep the note title under 160 characters.')
-  if (subject.length > 80) throw new Error('Keep the subject tag under 80 characters.')
+  if (!batchName) throw new Error('Choose a batch first.')
   if (body.length > 20000) throw new Error('This note is too long. Keep it under 20,000 characters.')
 
   let filePath: string | null = null
@@ -157,7 +256,7 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
     if (!file) throw new Error('Choose a file or PDF to upload.')
     if (file.size > MAX_NOTE_FILE_SIZE) throw new Error('Files must be 15 MB or smaller.')
     fileName = safeFileName(file.name)
-    mimeType = file.type || 'application/octet-stream'
+    mimeType = cleanLine(file.type || 'application/octet-stream', 160)
     fileSize = file.size
     filePath = `${teacherId}/${randomId()}-${fileName}`
     const { error: uploadError } = await sb().storage.from(STUDENT_NOTES_BUCKET).upload(filePath, file, {
@@ -173,7 +272,7 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
   }
 
   try {
-    const { data, error } = await sb().rpc('save_my_student_note', {
+    const { data, error } = await sb().rpc('save_my_batch_note', {
       p_kind: input.kind,
       p_title: title,
       p_subject: subject,
@@ -182,6 +281,9 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
       p_file_name: fileName,
       p_mime_type: mimeType,
       p_file_size: fileSize,
+      p_batch_name: batchName,
+      p_teacher_name: teacherName,
+      p_folder_name: folderName,
     })
     if (error) throw error
     if (!data) throw new Error('The note could not be saved. Try again.')
@@ -199,9 +301,12 @@ export async function deleteStudentNote(noteId: string): Promise<void> {
   if (data !== true) throw new Error('This note was already removed.')
 }
 
-export function publicNoteUrl(filePath: string, downloadName?: string): string | null {
-  if (!filePath) return null
-  const options = downloadName ? { download: downloadName } : undefined
-  const result = sb().storage.from(STUDENT_NOTES_BUCKET).getPublicUrl(filePath, options)
-  return safeHttpUrl(result.data.publicUrl)
+/** Private bucket: a short-lived signed URL, created only for the signed-in teacher's own files. */
+export async function signedNoteUrl(filePath: string, downloadName?: string): Promise<string | null> {
+  const path = cleanLine(filePath, 500)
+  if (!path) return null
+  const options = downloadName ? { download: cleanLine(downloadName, 255) } : undefined
+  const { data, error } = await sb().storage.from(STUDENT_NOTES_BUCKET).createSignedUrl(path, 3600, options)
+  if (error || !data?.signedUrl) return null
+  return safeHttpUrl(data.signedUrl)
 }

@@ -33,13 +33,14 @@ separate, purpose-built Supabase tables with row-level security.
   the profile name. One device keeps each teacher's workspace under its own `coachdesk:data:<userId>`
   key; no background sync or merge runs (`src/lib/auth.ts`). Deleting the account requires typing
   `DELETE` and erases the profile, workspace, legacy rows and cloud backup from the device and Supabase.
-- **Student Hub Manager** — the new first (far-left) Teacher App icon controls the live class topic/URL,
-  switches the class ON/OFF in Supabase, uploads files/PDFs, links and text notes with subject/title tags,
-  reviews or removes previous uploads, and copies the `./student-hub/` link
-  (`src/components/StudentHubManager.tsx`, `src/lib/studentHub.ts`).
-- **Student Portal** — `student-hub/index.html` is a standalone, read-only, single-page portal: a prominent
-  real-time Live Meeting / Class Preview card at the top, followed by filterable, viewable and downloadable
-  teacher materials. It uses relative CSS/JS/Supabase-client paths and an anonymous SELECT-only client.
+- **Student Hub Manager** — the first (far-left) Teacher App icon controls the live class topic/URL,
+  **meeting duration (30/45/60 quick buttons + custom minutes → `duration_minutes` / `expires_at`)**,
+  switches the class ON/OFF, and organises files/PDFs, links and text notes into **batch-tagged folders**.
+  It also copies the `./student-hub/` link (`src/components/StudentHubManager.tsx`, `src/lib/studentHub.ts`).
+- **Student Portal** — `student-hub/index.html` is a standalone, read-only, single-page portal: one-time
+  name + batch onboarding saved in `localStorage`, a teacher picker and top-bar **Switch Teacher** control,
+  a live card with a duration badge and countdown that hides the class at `expires_at`, and notes grouped by
+  folder for exactly the selected batch and teacher. Relative assets, anonymous SELECT-only client.
 - **Installable PWA** — manifest, maskable icons and service worker (`public/`).
 
 ## Getting started
@@ -54,7 +55,7 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Vite dev server (binds to all interfaces, accepts proxied preview hosts) |
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
-| `npm test` | Vitest suite (happy-dom), 335 tests across 24 files |
+| `npm test` | Vitest suite (happy-dom), 341 tests across 24 files |
 | `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
@@ -65,7 +66,8 @@ src/
   components/        screens, bottom sheets, BackupMenu and StudentHubManager
   lib/
     store.ts         persisted state + useAttendance hook
-    studentHub.ts   live meeting / notes helpers for the authenticated Teacher App
+    studentHub.ts   meeting duration, batch folders and notes helpers for the Teacher App
+    sanitize.ts     trim/control-strip/escaping for all Teacher App text inputs
     ledger.ts        fee steps, marks, derivation/sanitising of saved state
     accounts.ts      statements, outstanding, ageing
     payments.ts      receipts, allocation, discounts, charges, reversals
@@ -76,7 +78,8 @@ src/
     cloudBackup.ts   explicit snapshot upload / fetch / local overwrite
     money.ts, phone.ts, email.ts, backup.ts, photo.ts, …
 public/              manifest, app icons + favicon, service worker
-student-hub/         standalone Student Portal: index.html, styles.css, portal.js, config.json, vendor/supabase.js
+student-hub/         standalone Student Portal: index.html, styles.css, portal.js, sanitize.js,
+                     config.json, vendor/supabase.js
 tests/               Vitest suites (unit + component + E2E-style flows)
 ```
 
@@ -186,32 +189,68 @@ Overwrite there.
 `20261119150845_manual_cloud_backups.sql`,
 `20261119152547_revoke_app_state_client_writes.sql`,
 `20261119165932_delete_account_wipe_all_data.sql`,
-`20261120123502_student_hub_live_meeting_notes.sql` and
-`20261120125627_student_hub_explicit_anon_deny.sql`. The public defaults in
+`20261120123502_student_hub_live_meeting_notes.sql`,
+`20261120125627_student_hub_explicit_anon_deny.sql`,
+`20261121173331_student_hub_batches_duration_folders.sql`,
+`20261121173440_student_hub_batches_finish_rpcs.sql`, then the three strict-scope
+hardening migrations `20261121175754_student_hub_scope_headers.sql`,
+`20261121175822_student_hub_private_storage.sql` and
+`20261121175838_student_hub_snapshot_scope_guard.sql`. The public defaults in
 `student-hub/config.json` are shared by both apps, so no environment variables are required for the
 live project. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` only to override them (see
 `.env.example`; both are public values). Vercel already has them for production, preview and
 development. The GitHub Pages redirect allow list includes `https://vinaysoni-in.github.io/**`; add
 any custom Pages domain to Supabase Auth → URL Configuration as well.
 
-## Student Hub
+## Student Hub (v2 — batches, folders, durations)
 
-- **Teacher App** — the new far-left **Hub** icon opens Student Hub Manager. The original Present, Fees and
-  Students icons keep their positions and the default attendance landing screen is unchanged.
-- **Live control** — `set_my_live_meeting` upserts one row per teacher from `auth.uid()`. The portal's
-  realtime subscription (plus a 15-second polling fallback) updates the pulsing badge and Join Now button.
-- **Materials** — files/PDFs go to the public `student_notes` Storage bucket under `<auth uid>/…`. Links,
-  text notes and file metadata live in `public.student_notes`. `save_my_student_note` and
-  `delete_my_student_note` are authenticated-only RPCs; the portal never sees a teacher session.
-- **RLS** — `anon` and `authenticated` get `SELECT` on `public.live_meetings` and `public.student_notes`.
-  Direct client writes are revoked; explicit deny policies also block anonymous writes on the Hub tables
-  and Storage objects. Only authenticated teachers can execute the write RPCs or write their own
-  Storage folder. `delete_me()` also erases Student Hub rows/files on account deletion.
+See [`docs/STUDENT_HUB_BATCH_UPDATE.md`](docs/STUDENT_HUB_BATCH_UPDATE.md) for copy-pasteable SQL and
+the Teacher/Student JS changes, separated into three sections.
+
+- **Teacher App** — the far-left **Hub** icon opens Student Hub Manager; Present, Fees, Students and the
+  default attendance landing screen are unchanged. A **Batch Name** selector tags every live class,
+  folder and note. **Meeting Duration** has `30 / 45 / 60 mins` quick buttons plus a custom minutes
+  input; `expires_at = now() + duration_minutes` is computed in `src/lib/studentHub.ts` and verified
+  again by `set_my_batch_meeting` (a trigger also backfills it for the legacy v1 RPC).
+- **Batch folders & notes** — `public.folders` requires a non-null `batch_name`; `public.student_notes`
+  (the notes table) has `batch_name NOT NULL` and `folder_id`. `public.notes` is a `security_invoker`
+  view joining each note to its folder. `save_my_folder`, `save_my_batch_note`, `delete_my_folder`
+  and `set_my_batch_meeting` are authenticated-only RPCs pinning `teacher_id = auth.uid()`.
+- **Student onboarding** — first visit asks for **Full Name** + **Batch** (dropdown built from
+  `public.student_hub_directory`), then shows only teachers attached to that batch. `student_name`,
+  `selected_batch` and `selected_teacher_id` live in `localStorage`; later visits skip straight to the
+  dashboard. The top-bar **Switch Teacher** pill changes teachers in one click; **Change** re-runs setup.
+- **Live card** — pulsing badge, `Duration: 45 Mins` badge, `Ends in mm:ss` countdown, and Join Now.
+  Once `expires_at` passes the card hides the join link and shows "This class has ended". A 1-second
+  tick handles expiry; realtime + 15-second polling keep the feed fresh.
+- **Strictly scoped reads** — `student_hub_snapshot(p_batch_name, p_teacher_id)` is a read-only
+  SECURITY DEFINER RPC whose `WHERE` clause pins **both** columns and whose guard rejects a request when
+  `X-Student-Hub-Batch` / `X-Student-Hub-Teacher-Id` do not match the arguments. Every direct table,
+  view and Storage read carries the same headers; RLS policies call `student_hub_scope_matches()` and
+  return zero rows without a matching pair. Notes are grouped by folder and labelled with the batch.
+- **Private Storage** — `student_notes` is a private bucket. The Teacher App opens its own files with
+  one-hour signed URLs; the Student Portal fetches a file as a Blob from the scoped Storage endpoint
+  and opens/downloads a temporary `blob:` URL. No public object URL can bypass RLS.
+- **RLS** — anon gets scoped `SELECT` only and has explicit deny policies for INSERT/UPDATE/DELETE on
+  all Hub tables and Storage objects. Authenticated teachers have SELECT/INSERT/UPDATE/DELETE policies
+  scoped to `auth.uid() = teacher_id`; `delete_me()` erases notes, folders, meetings and Storage files.
+  All text is trimmed/control-stripped, escaped for HTML-string contexts, and all URLs are http(s)-checked
+  (`src/lib/sanitize.ts`, `student-hub/sanitize.js`).
+- **Isolation caveat** — the portal is intentionally public/anon, and the database enforces that every
+  read supplies a matching `(batch_name, teacher_id)` pair. Because there is no student identity, a
+  technically sophisticated caller holding the public anon key can still choose a different pair in
+  the headers; that is as strong as anonymous, link-shared access can be. Cryptographic per-student
+  isolation would require student auth accounts or a teacher-issued batch code. Realtime remains a
+  best-effort invalidation channel; the authoritative 15-second/visibility poll always uses the scoped
+  REST headers.
 
 ## Deploying to GitHub Pages
 
 `.github/workflows/pages.yml` builds on pushes to `main`, uploads `dist/`, and deploys with
-`actions/deploy-pages@v4`. In repository Settings → Pages, choose **GitHub Actions** as the source.
+`actions/deploy-pages@v4`. In repository Settings → Pages, choose **GitHub Actions** as the source once;
+the workflow cannot enable Pages itself with the default `GITHUB_TOKEN` (a PAT or GitHub App token with
+`administration:write` and `pages:write` would be needed for `configure-pages@v5`'s `enablement` input).
+The post-merge Pages run failed at `configure-pages@v5` because the Pages site was not configured.
 No repository secrets are needed: `npm run build` uses the public defaults in
 `student-hub/config.json`, and the Vite `copy-student-hub` plugin copies the standalone portal into
 `dist/student-hub/`.
