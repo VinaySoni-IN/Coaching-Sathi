@@ -2,12 +2,15 @@
    The Teacher App owns every write. This page uses an anonymous Supabase client, SELECTs and one
    read-only snapshot RPC. It never calls INSERT/UPDATE/DELETE/RPC-write and only ever uses the
    public anon key — no privileged key is present in this static bundle.
-   Sections: 1) config + local profile  2) onboarding + teacher switcher  3) live class card
-             4) notes/folders  5) data loading + realtime/polling. */
+   Sections: 1) config + local profile  2) onboarding + teacher switcher  3) live + scheduled
+             classes  4) notes/folders (+ ?note= deep links)  5) data loading + realtime/polling. */
 
 'use strict'
 
-import { cleanBody, cleanLine, escapeHtml, formatDuration, formatRemaining, initials, safeHttpUrl } from './sanitize.js'
+import {
+  cleanBody, cleanLine, escapeHtml, formatClock, formatDurationLabel, formatRemaining,
+  formatStartsIn, initials, safeHttpUrl,
+} from './sanitize.js'
 
 const CONFIG_URL = './config.json'
 const STORAGE_BUCKET = 'student_notes'
@@ -56,6 +59,8 @@ const state = {
   batches: [],
   teachers: [],
   meeting: null,
+  meetings: [],
+  deepLinkNote: '',
   folders: [],
   notes: [],
   query: '',
@@ -328,6 +333,7 @@ function changeProfile() {
   state.teacherId = ''
   state.teachers = []
   state.meeting = null
+  state.meetings = []
   state.folders = []
   state.notes = []
   state.loadedOnce = false
@@ -338,17 +344,41 @@ function changeProfile() {
 }
 
 /* --------------------------------------------------------------------------------------------
-   3. Live class card: duration badge, remaining time, automatic end at expires_at
+   3. Live + scheduled classes: one card per meeting, never more than the teacher scheduled
    -------------------------------------------------------------------------------------------- */
-function activeMeeting() {
-  const row = state.meeting
-  if (!row || row.is_live !== true) return null
-  const href = safeHttpUrl(row.meeting_url || row.meeting_link)
-  if (!href) return null
+/** Effective state from the clock — the same rule the database applies. */
+function meetingState(row, now = Date.now()) {
+  if (!row) return 'ended'
+  if (cleanLine(row.status, 20) === 'ended') return 'ended'
+  const start = Date.parse(row.scheduled_start || row.created_at || '')
   const expiry = Date.parse(row.expires_at || '')
-  if (!Number.isFinite(expiry)) return { row, href, expiry: 0 }
-  if (expiry <= Date.now()) return null
-  return { row, href, expiry }
+  if (Number.isFinite(start) && start > now) return 'scheduled'
+  if (Number.isFinite(expiry) && expiry > now) return 'live'
+  return Number.isFinite(start) ? 'ended' : 'scheduled'
+}
+
+function visibleMeetings(now = Date.now()) {
+  const seen = new Set()
+  return state.meetings
+    .filter((row) => {
+      if (!row || typeof row !== 'object') return false
+      // Defence in depth: never render another batch's or teacher's row.
+      if (cleanLine(row.batch_name, 80) !== state.batch) return false
+      if (cleanLine(row.teacher_id, 64) !== state.teacherId) return false
+      if (seen.has(row.id)) return false
+      seen.add(row.id)
+      return meetingState(row, now) !== 'ended'
+    })
+    .sort((a, b) => {
+      const aLive = meetingState(a, now) === 'live' ? 0 : 1
+      const bLive = meetingState(b, now) === 'live' ? 0 : 1
+      if (aLive !== bLive) return aLive - bLive
+      return String(a.scheduled_start || '').localeCompare(String(b.scheduled_start || ''))
+    })
+}
+
+function meetingHeading(row) {
+  return cleanLine(row.meeting_title || row.topic, 140) || 'Live class'
 }
 
 function updateRemaining(expiry) {
@@ -356,63 +386,111 @@ function updateRemaining(expiry) {
   if (!remaining) return
   const ms = expiry > 0 ? expiry - Date.now() : 0
   if (expiry > 0 && ms <= 0) {
-    // Meeting duration is over: hide Join Now, mark it ended and refresh from Supabase.
-    renderLive()
+    // The duration is over: refresh so the card disappears instead of offering a dead join link.
     void loadAll()
     return
   }
-  remaining.textContent = expiry > 0 ? `Ends in ${formatRemaining(ms)}` : 'Live now'
+  remaining.textContent = expiry > 0 ? `Ends in ${formatRemaining(ms)}` : ''
 }
 
-function renderLive() {
-  const active = activeMeeting()
-  const ended = Boolean(state.meeting && state.meeting.is_live === true && !active)
-  setSyncLabel(active ? 'Live now' : ended ? 'Class ended' : 'Up to date', Boolean(active))
-  els.liveContent.replaceChildren()
+/** Schedules re-render every 30s so a scheduled class flips to live by itself. */
+function tickSchedules() {
+  const now = Date.now()
+  visibleMeetings(now).forEach((row) => {
+    if (meetingState(row, now) !== 'live' || !row.expires_at) return
+    const expiry = Date.parse(row.expires_at)
+    if (Number.isFinite(expiry)) updateRemaining(expiry)
+  })
+}
 
-  if (!active) {
-    const offline = elem('div', 'offline-state')
-    offline.append(
-      elem('strong', '', ended ? 'This class has ended' : 'No live class right now'),
-      elem('span', '', ended
-        ? 'The meeting duration is over. Your teacher will start a new class when ready.'
-        : 'Your teacher will switch on the live badge when class begins.'),
-    )
-    els.liveContent.append(offline)
-    return
-  }
+function meetingCard(row) {
+  const now = Date.now()
+  const stateNow = meetingState(row, now)
+  const live = stateNow === 'live'
+  const href = safeHttpUrl(row.meeting_url || row.meeting_link)
 
-  const { row, href, expiry } = active
-  const session = elem('div', 'live-session')
+  const article = elem('article', `live-session meeting-card ${live ? 'is-live' : 'is-scheduled'}`)
   const main = elem('div', 'live-session-main')
-  const badge = elem('div', 'live-badge')
-  const dot = elem('span', 'live-dot')
-  dot.setAttribute('aria-hidden', 'true')
-  badge.append(dot, document.createTextNode('Live now'))
+
   const badges = elem('div', 'live-badges')
-  badges.append(elem('span', 'duration-badge', `Duration: ${formatDuration(row.duration_minutes)}`))
-  const remaining = elem('span', 'remaining-badge', '')
-  remaining.id = 'remaining-time'
-  badges.append(remaining)
-  const topic = cleanLine(row.topic, 140) || 'Live class'
-  main.append(badge, elem('div', 'live-topic', topic), badges)
+  if (live) {
+    const badge = elem('div', 'live-badge')
+    const dot = elem('span', 'live-dot')
+    dot.setAttribute('aria-hidden', 'true')
+    badge.append(dot, document.createTextNode('LIVE NOW'))
+    badges.append(badge)
+  } else {
+    badges.append(elem('span', 'schedule-badge', 'SCHEDULED'))
+  }
+  badges.append(elem('span', 'duration-badge', `Duration: ${formatDurationLabel(row.duration_minutes)}`))
+  if (live) {
+    const remaining = elem('span', 'remaining-badge', '')
+    remaining.id = 'remaining-time'
+    badges.append(remaining)
+  }
+  main.append(badges, elem('div', 'live-topic', meetingHeading(row)))
 
   const meta = []
   meta.push(cleanLine(row.teacher_name, 120) || teacherNameFor(state.teacherId))
   const batch = cleanLine(row.batch_name, 80)
   if (batch) meta.push(`Batch: ${batch}`)
-  const when = formatDate(row.updated_at)
-  if (when) meta.push(`Started ${when}`)
+  const startClock = formatClock(row.scheduled_start)
+  if (startClock) meta.push(`${live ? 'Started' : 'Starts'} ${startClock}`)
+  if (!live) {
+    const startsIn = formatStartsIn(Date.parse(row.scheduled_start || '') - now)
+    if (startsIn) meta.push(startsIn)
+  }
+  if (live && row.expires_at) meta.push(`Ends ${formatClock(row.expires_at)}`)
   main.append(elem('div', 'live-meta', meta.join(' · ')))
 
-  const join = elem('a', 'join-btn', 'Join Now ↗')
-  join.href = href
-  join.target = '_blank'
-  join.rel = 'noopener noreferrer'
-  join.setAttribute('aria-label', `Join ${topic}`)
-  session.append(main, join)
-  els.liveContent.append(session)
-  updateRemaining(expiry)
+  article.append(main)
+
+  if (!href) {
+    article.append(elem('span', 'join-btn is-disabled', live ? 'Link coming soon' : 'Link on the way'))
+  } else if (live) {
+    const join = elem('a', 'join-btn', 'Join Now ↗')
+    join.href = href
+    join.target = '_blank'
+    join.rel = 'noopener noreferrer'
+    join.setAttribute('aria-label', `Join ${meetingHeading(row)}`)
+    article.append(join)
+  } else {
+    // Scheduled: the link is visible but inactive until the start time arrives.
+    const disabled = elem('span', 'join-btn is-disabled', 'Opens at start time')
+    disabled.setAttribute('aria-disabled', 'true')
+    article.append(disabled)
+  }
+  return article
+}
+
+function renderLive() {
+  const rows = visibleMeetings()
+  const liveRows = rows.filter((row) => meetingState(row) === 'live')
+  setSyncLabel(liveRows.length ? 'Live now' : 'Up to date', liveRows.length > 0)
+  els.liveContent.replaceChildren()
+
+  const heading = elem('div', 'meetings-head')
+  heading.append(
+    elem('span', 'meetings-head-title', liveRows.length
+      ? `${liveRows.length} class${liveRows.length === 1 ? '' : 'es'} live now`
+      : 'Your classes'),
+    elem('span', 'meetings-head-count', rows.length
+      ? `${rows.length} upcoming or live`
+      : 'Nothing scheduled'),
+  )
+  els.liveContent.append(heading)
+
+  if (!rows.length) {
+    const offline = elem('div', 'offline-state')
+    offline.append(
+      elem('strong', '', 'No scheduled classes right now'),
+      elem('span', '', 'Your teacher will schedule the next class soon. Notes are still below.'),
+    )
+    els.liveContent.append(offline)
+    return
+  }
+
+  rows.forEach((row) => els.liveContent.append(meetingCard(row)))
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -478,6 +556,21 @@ function copyButton(label, value) {
   return button
 }
 
+/** Direct, shareable link to one note: .../student-hub/?note=<note_id> */
+function noteShareUrl(noteId) {
+  const id = cleanLine(noteId, 64)
+  if (!id) return location.href
+  return `${location.origin}${location.pathname}?note=${encodeURIComponent(id)}`
+}
+
+function scrollToDeepLink() {
+  if (!state.deepLinkNote) return
+  const target = document.querySelector('.note-card.is-target')
+  if (!target) return
+  try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch { /* older browsers */ }
+  target.classList.add('is-flash')
+}
+
 function kindLabel(kind) {
   if (kind === 'file') return 'File / PDF'
   if (kind === 'link') return 'Link'
@@ -487,6 +580,11 @@ function kindLabel(kind) {
 
 function noteCard(note) {
   const card = elem('article', 'note-card')
+  const noteKey = cleanLine(note.id, 64)
+  if (noteKey && noteKey === state.deepLinkNote) {
+    card.classList.add('is-target')
+    card.setAttribute('tabindex', '-1')
+  }
   const top = elem('div', 'note-top')
   top.append(
     elem('span', 'subject-pill', cleanLine(note.subject, 80) || 'General'),
@@ -504,7 +602,7 @@ function noteCard(note) {
     const name = cleanLine(note.file_name, 255) || 'Study material'
     const size = formatBytes(note.file_size)
     card.append(elem('p', 'note-detail', `${name}${size ? ` · ${size}` : ''}${cleanLine(note.mime_type, 160) ? ` · ${cleanLine(note.mime_type, 160)}` : ''}`))
-    const path = cleanLine(note.file_path, 500)
+    const path = cleanLine(note.storage_path || note.file_path, 500)
     if (path) {
       actions.append(fileAction('Open', path, name, false, true), fileAction('Download', path, name, true))
     } else {
@@ -528,11 +626,21 @@ function noteCard(note) {
     download.addEventListener('click', () => window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1500), { once: true })
     actions.append(download, copyButton('Copy note', body))
   }
+  // Every note can be shared as a direct link to this student hub, even without a file.
+  actions.append(copyButton('Copy share link', noteShareUrl(note.id)))
   card.append(actions)
   return card
 }
 
 function renderNotes() {
+  // A direct ?note= link must never be hidden by a stale filter from this device.
+  if (state.deepLinkNote && state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+    state.query = ''
+    state.subject = 'all'
+    state.kind = 'all'
+    els.search.value = ''
+    els.kindFilter.value = 'all'
+  }
   const seen = new Set(['all'])
   state.notes.forEach((note) => seen.add(cleanLine(note.subject, 80) || 'General'))
   const subjects = ['all', ...[...seen].filter((subject) => subject !== 'all').sort((a, b) => a.localeCompare(b))]
@@ -599,6 +707,7 @@ function renderNotes() {
     group.append(head, wrap)
     els.notesList.append(group)
   })
+  scrollToDeepLink()
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -650,11 +759,11 @@ async function readDirect() {
   const legacyFields = 'id,teacher_id,teacher_name,batch_name,title,subject,kind,body,file_path,file_name,mime_type,file_size,folder_id,created_at'
   const [live, folders, notes] = await Promise.all([
     scoped(client.from('live_meetings'))
-      .select('teacher_id,teacher_name,batch_name,topic,meeting_url,is_live,duration_minutes,expires_at,created_at,updated_at')
+      .select('id,teacher_id,teacher_name,batch_name,meeting_title,topic,meeting_url,meeting_link,status,scheduled_start,duration_minutes,expires_at,created_at,updated_at')
       .eq('batch_name', state.batch)
       .eq('teacher_id', state.teacherId)
-      .eq('is_live', true)
-      .limit(1),
+      .order('scheduled_start', { ascending: true })
+      .limit(20),
     scoped(client.from('folders'))
       .select('id,batch_name,name,created_at')
       .eq('batch_name', state.batch)
@@ -679,7 +788,7 @@ async function readDirect() {
   const failure = live.error || folders.error || noteRows.error
   if (failure) throw failure
   return {
-    meeting: Array.isArray(live.data) ? live.data[0] ?? null : null,
+    meetings: Array.isArray(live.data) ? live.data : [],
     folders: Array.isArray(folders.data) ? folders.data : [],
     notes: Array.isArray(noteRows.data) ? noteRows.data : [],
   }
@@ -701,7 +810,19 @@ async function loadAll() {
     } catch { /* older project: use the direct filtered SELECTs below */ }
     if (!payload) payload = await readDirect()
 
-    state.meeting = payload.meeting && typeof payload.meeting === 'object' ? payload.meeting : null
+    const meetingRows = Array.isArray(payload.meetings)
+      ? payload.meetings
+      : payload.meeting && typeof payload.meeting === 'object'
+        ? [payload.meeting]
+        : []
+    // Defence in depth: only rows for this exact batch + teacher are rendered.
+    state.meetings = meetingRows.filter((row) =>
+      row && typeof row === 'object'
+      && cleanLine(row.batch_name, 80) === state.batch
+      && cleanLine(row.teacher_id, 64) === state.teacherId
+      && meetingState(row) !== 'ended',
+    )
+    state.meeting = state.meetings.find((row) => meetingState(row) === 'live') ?? null
     state.folders = Array.isArray(payload.folders) ? payload.folders : []
     // Defence in depth: never render a row that is not for this exact batch + teacher.
     state.notes = (Array.isArray(payload.notes) ? payload.notes : []).filter((note) =>
@@ -776,6 +897,12 @@ async function start() {
   bindControls()
   subscribe()
 
+  // Direct share link: .../student-hub/?note=<note_id>. Kept until the batch/teacher is known.
+  try {
+    const params = new URLSearchParams(location.search)
+    state.deepLinkNote = cleanLine(params.get('note'), 64)
+  } catch { /* no query string support */ }
+
   try {
     await loadDirectory()
   } catch (error) {
@@ -795,12 +922,14 @@ async function start() {
     renderTeacherPicker()
   } else {
     await loadAll()
+    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+      showToast('That note is not available for your batch and teacher.')
+    }
   }
 
   window.setInterval(() => { if (!document.hidden) void loadAll() }, POLL_MS)
   window.setInterval(() => {
-    const active = activeMeeting()
-    if (active) updateRemaining(active.expiry)
+    if (!document.hidden) tickSchedules()
   }, 1000)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) void loadAll() })
   globalThis.addEventListener('pagehide', () => {

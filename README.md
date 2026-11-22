@@ -55,7 +55,7 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Vite dev server (binds to all interfaces, accepts proxied preview hosts) |
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
-| `npm test` | Vitest suite (happy-dom), 341 tests across 24 files |
+| `npm test` | Vitest suite (happy-dom), 344 tests across 24 files |
 | `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
@@ -192,26 +192,39 @@ Overwrite there.
 `20261120123502_student_hub_live_meeting_notes.sql`,
 `20261120125627_student_hub_explicit_anon_deny.sql`,
 `20261121173331_student_hub_batches_duration_folders.sql`,
-`20261121173440_student_hub_batches_finish_rpcs.sql`, then the three strict-scope
-hardening migrations `20261121175754_student_hub_scope_headers.sql`,
-`20261121175822_student_hub_private_storage.sql` and
-`20261121175838_student_hub_snapshot_scope_guard.sql`. The public defaults in
+`20261121173440_student_hub_batches_finish_rpcs.sql`, the three strict-scope hardening migrations
+`20261121175754_student_hub_scope_headers.sql`,
+`20261121175822_student_hub_private_storage.sql`,
+`20261121175838_student_hub_snapshot_scope_guard.sql`, and the v3 pair
+`20261122182327_student_hub_multi_meetings.sql` +
+`20261122182349_student_hub_meeting_rpcs_share.sql`. The public defaults in
 `student-hub/config.json` are shared by both apps, so no environment variables are required for the
 live project. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` only to override them (see
 `.env.example`; both are public values). Vercel already has them for production, preview and
 development. The GitHub Pages redirect allow list includes `https://vinaysoni-in.github.io/**`; add
 any custom Pages domain to Supabase Auth → URL Configuration as well.
 
-## Student Hub (v2 — batches, folders, durations)
+## Student Hub (v3 — many meetings, scheduling, shareable notes)
 
 See [`docs/STUDENT_HUB_BATCH_UPDATE.md`](docs/STUDENT_HUB_BATCH_UPDATE.md) for copy-pasteable SQL and
 the Teacher/Student JS changes, separated into three sections.
 
 - **Teacher App** — the far-left **Hub** icon opens Student Hub Manager; Present, Fees, Students and the
-  default attendance landing screen are unchanged. A **Batch Name** selector tags every live class,
-  folder and note. **Meeting Duration** has `30 / 45 / 60 mins` quick buttons plus a custom minutes
-  input; `expires_at = now() + duration_minutes` is computed in `src/lib/studentHub.ts` and verified
-  again by `set_my_batch_meeting` (a trigger also backfills it for the legacy v1 RPC).
+  default attendance landing screen are unchanged. A **Batch Name** selector tags every meeting, folder
+  and note.
+- **Many meetings per teacher** — `live_meetings` now has a uuid `id` primary key (the old
+  `teacher_id` primary key is dropped), so one teacher can keep several live or future-scheduled
+  classes across batches. `save_my_meeting(p_id, …)` creates or reschedules one, `delete_my_meeting`
+  removes it, and `set_my_batch_meeting` remains as a "start this batch now" compatibility wrapper.
+  Columns: `meeting_title`, `scheduled_start`, `duration_minutes`, `expires_at`, `status`
+  (`scheduled` | `live` | `ended`). A trigger keeps `expires_at = scheduled_start + duration` and
+  `is_live` in step; `student_hub_meeting_state()` derives the effective state from the clock so a
+  scheduled row turns live at its start time without another write.
+- **Scheduling UI** — a native `<input type="datetime-local">` clock picker plus a **Start Now**
+  shortcut and a **Go live now** button. **Duration** pairs a number input with a
+  **Minutes | Hours** toggle (1.5 h → 90 min before it is sent) and `30 / 45 / 60` presets; the label
+  reads `45 Mins` or `1 Hr 30 Mins`. **Scheduled & live meetings** lists every row with `LIVE NOW`,
+  `SCHEDULED` or `EXPIRED` badges, batch, start clock time, duration and delete/edit actions.
 - **Batch folders & notes** — `public.folders` requires a non-null `batch_name`; `public.student_notes`
   (the notes table) has `batch_name NOT NULL` and `folder_id`. `public.notes` is a `security_invoker`
   view joining each note to its folder. `save_my_folder`, `save_my_batch_note`, `delete_my_folder`
@@ -220,9 +233,20 @@ the Teacher/Student JS changes, separated into three sections.
   `public.student_hub_directory`), then shows only teachers attached to that batch. `student_name`,
   `selected_batch` and `selected_teacher_id` live in `localStorage`; later visits skip straight to the
   dashboard. The top-bar **Switch Teacher** pill changes teachers in one click; **Change** re-runs setup.
-- **Live card** — pulsing badge, `Duration: 45 Mins` badge, `Ends in mm:ss` countdown, and Join Now.
-  Once `expires_at` passes the card hides the join link and shows "This class has ended". A 1-second
-  tick handles expiry; realtime + 15-second polling keep the feed fresh.
+- **Live + upcoming list** — the portal renders every live and scheduled class for the saved batch and
+  teacher. Live rows show a pulsing badge, `Duration: 1 Hr 30 Mins`, `Ends in mm:ss` and an active
+  **Join Now**; scheduled rows show `SCHEDULED`, the local start clock time, `Starts in …` and an
+  inactive *Opens at start time* button until `scheduled_start` arrives. Rows vanish after
+  `expires_at`, and the empty state is a friendly "No scheduled classes right now".
+- **Shareable notes** — every note has a stable uuid, and `?note=<note_id>` deep-links straight to it
+  (the portal clears stale filters, scrolls to and highlights the card, and shows a friendly notice if
+  the note is not in scope). Both apps expose a copy-link action:
+  `<student-hub>/?note=<uuid>`.
+- **Storage-safe deletes** — deleting a note calls
+  `storage.from('student_notes').remove([storage_path])` first and only then deletes the metadata row.
+  The SQL never deletes `storage.objects` (Supabase rejects that with *"Direct deletion from storage
+  tables is not allowed. Use the Storage API instead."*); account deletion purges the teacher's folder
+  through the Storage API before calling `delete_me()`.
 - **Strictly scoped reads** — `student_hub_snapshot(p_batch_name, p_teacher_id)` is a read-only
   SECURITY DEFINER RPC whose `WHERE` clause pins **both** columns and whose guard rejects a request when
   `X-Student-Hub-Batch` / `X-Student-Hub-Teacher-Id` do not match the arguments. Every direct table,
@@ -233,7 +257,9 @@ the Teacher/Student JS changes, separated into three sections.
   and opens/downloads a temporary `blob:` URL. No public object URL can bypass RLS.
 - **RLS** — anon gets scoped `SELECT` only and has explicit deny policies for INSERT/UPDATE/DELETE on
   all Hub tables and Storage objects. Authenticated teachers have SELECT/INSERT/UPDATE/DELETE policies
-  scoped to `auth.uid() = teacher_id`; `delete_me()` erases notes, folders, meetings and Storage files.
+  scoped to `auth.uid() = teacher_id`; `delete_me()` erases notes, folders, meetings, backups, sync
+  log, app state and the auth user (Storage files are removed by the client first). The anon policy on
+  `live_meetings` also hides ended rows, so only live and upcoming classes are ever readable.
   All text is trimmed/control-stripped, escaped for HTML-string contexts, and all URLs are http(s)-checked
   (`src/lib/sanitize.ts`, `student-hub/sanitize.js`).
 - **Isolation caveat** — the portal is intentionally public/anon, and the database enforces that every

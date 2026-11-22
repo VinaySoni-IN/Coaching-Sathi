@@ -54,6 +54,34 @@ export function formatDuration(minutes) {
   return `${n} Mins`
 }
 
+/** "45 Mins" / "1 Hr 30 Mins" / "2 Hrs" — student-facing duration label. */
+export function formatDurationLabel(minutes) {
+  const n = Math.max(1, Math.min(480, Math.round(Number(minutes) || 45)))
+  const hours = Math.floor(n / 60)
+  const rest = n % 60
+  if (!hours) return `${rest} Mins`
+  if (!rest) return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'}`
+  return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'} ${rest} Mins`
+}
+
+/** Local clock time, e.g. "6:30 pm". */
+export function formatClock(iso) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+/** "Starts in 12 min" / "Starts in 2 hr 5 min" — empty once the class has begun. */
+export function formatStartsIn(ms) {
+  const total = Math.max(0, Math.ceil(Number(ms) / 60000))
+  if (!total) return ''
+  if (total < 60) return `Starts in ${total} min`
+  const hours = Math.floor(total / 60)
+  if (hours < 24) return `Starts in ${hours} hr${total % 60 ? ` ${total % 60} min` : ''}`
+  const days = Math.floor(hours / 24)
+  return `Starts in ${days} day${days === 1 ? '' : 's'}`
+}
+
 /** Remaining time as mm:ss (or h:mm:ss). */
 export function formatRemaining(ms) {
   const total = Math.max(0, Math.ceil(Number(ms) / 1000 || 0))
