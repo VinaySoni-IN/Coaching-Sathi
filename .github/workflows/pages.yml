@@ -28,6 +28,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # The repository must have Pages enabled once with source "GitHub Actions".
+      # configure-pages@v5 cannot do that with the default GITHUB_TOKEN; its enablement
+      # input requires a separate PAT/App token with administration:write + pages:write.
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
