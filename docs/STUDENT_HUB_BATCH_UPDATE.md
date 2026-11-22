@@ -1,25 +1,25 @@
-# Student Hub — batch, folder, duration & strict-scope update
+# Student Hub v3 — many meetings, scheduling, shareable notes & storage-safe deletes
 
-This document is the copy-pasteable companion to the current workspace. It is deliberately split into the three sections the request asked for: **1) Supabase SQL Schema & RLS**, **2) Teacher App**, **3) Student App**. The parent `index.html` is the Vite Teacher App; `student-hub/index.html` is the standalone Student Portal served from `/student-hub/` on GitHub Pages and from `dist/student-hub/` on Vercel.
+Copy-pasteable companion to the current workspace, split into the three requested sections:
+**1) Supabase SQL Schema & Storage Policy Fix**, **2) Teacher Hub (`index.html` / JS & CSS)**, **3) Student Hub (`student-hub/index.html` / JS & CSS)**.
 
-## Scope decisions and important caveat
+## What changed
 
-- Only the public Supabase URL and anon key appear in the browser. No `service_role` key is used or embedded.
-- Teacher App writes go through authenticated RPCs that pin `teacher_id = auth.uid()`. There are no anonymous INSERT/UPDATE/DELETE grants, plus explicit anon deny policies.
-- Every anon content read must supply **both** `X-Student-Hub-Batch` and `X-Student-Hub-Teacher-Id`. PostgREST exposes those headers to RLS through `current_setting('request.headers')`; `student_hub_scope_matches()` rejects a missing or mismatched pair. `student_hub_snapshot()` also rejects a parameter/header mismatch.
-- `student_hub_directory` is the one unscoped surface: a `security_definer` barrier view exposing only `(batch_name, teacher_id, teacher_name)` so first-visit onboarding can populate its dropdowns. It exposes no links, notes or files.
-- The `student_notes` bucket is **private**. Teacher App uses one-hour signed URLs for its own files; Student Portal fetches a Blob from the scoped Storage endpoint with the public anon key and both scope headers, then opens/downloads a temporary `blob:` URL. Public object URLs cannot bypass RLS.
-- `localStorage` onboarding is UX only. DB-side RLS/RPC/Storage policies and every query enforce the `(batch_name, teacher_id)` pair. Because students are anonymous, a caller with the public anon key can still *choose* another pair in the headers; cryptographic per-student identity isolation would require student auth accounts or a teacher-issued batch code. This is the strongest possible isolation for the requested passwordless public portal.
-- Realtime remains a best-effort invalidation channel; the authoritative 15-second/visibility poll always uses the scoped REST headers. Realtime plus polling fallback are both preserved.
-- GitHub Pages: the workflow deploys `dist` but the repository must have Pages enabled once with source **GitHub Actions**. `configure-pages@v5` cannot enable it with the default `GITHUB_TOKEN`; a PAT/App token with `administration:write` and `pages:write` would be required for its `enablement` input. No such secret is required by this code.
+- `live_meetings` holds **many rows per teacher**. `id` (uuid) is the primary key; the old `teacher_id` primary key is dropped. New columns `meeting_title`, `scheduled_start`, `status` (`scheduled` | `live` | `ended`), with `duration_minutes` and `expires_at` maintained by a trigger.
+- `student_hub_meeting_state()` derives the effective state from the clock, so a scheduled class becomes live at its start time with no extra write, and ended classes disappear from anon reads.
+- Notes expose `storage_path` (and keep the stable uuid `id`) so each note has a direct, shareable URL: `<student-hub>/?note=<note_id>`.
+- **Storage deletion bug fixed.** The old SQL deleted `storage.objects` directly, which Supabase rejects with *"Direct deletion from storage tables is not allowed. Use the Storage API instead."* Note deletion now calls `storage.from('student_notes').remove([path])` first and deletes the metadata row second; `delete_me()` no longer touches Storage (the client purges the folder first).
+- anon `SELECT` is limited to **live or upcoming** meetings inside the `(batch_name, teacher_id)` scope; INSERT/UPDATE/DELETE stay authenticated-only and pinned to `auth.uid() = teacher_id`.
 
-Live project `urbywuwtcjarwmjsfmem` already has migrations `20261121173331`, `20261121173440`, `20261121175754`, `20261121175822` and `20261121175838` applied. Do **not** reapply them there; the SQL below is for a fresh project or a local mirror.
+Live project `urbywuwtcjarwmjsfmem` already has **all** migrations below applied (`20261122182327` and `20261122182349` are the v3 pair). Do not reapply them there.
 
 ---
 
-## 1) Supabase SQL Schema & RLS
+## 1) Supabase SQL Schema & Storage Policy Fix
 
-Run these files **in filename order**. The first two Student Hub migrations create the v1 tables/Storage bucket; the next two add duration, expiry, batch folders and teacher RPCs; the last three harden anon reads, make Storage private and guard the snapshot RPC. They are idempotent additions on top of the earlier account/cloud-backup migrations already in this repo.
+Run in filename order on a fresh project.
+
+### All migrations
 
 ```sql
 -- ============ 20261115120000_init_cloud_sync.sql ============
@@ -1306,40 +1306,472 @@ begin
 end $$;
 revoke all on function public.student_hub_snapshot(text, uuid) from public, anon, authenticated;
 grant execute on function public.student_hub_snapshot(text, uuid) to anon, authenticated;
+
+-- ============ 20261122182327_student_hub_multi_meetings.sql ============
+/* -----------------------------------------------------------------------------------------------
+   Coaching Sathi — Student Hub v3, part 1 of 2: multi-meeting + shareable notes schema.
+
+   1. live_meetings holds MANY rows per teacher (id PK instead of teacher_id PK) with
+      meeting_title / scheduled_start / duration_minutes / expires_at / status.
+   2. Notes keep a unique uuid id and expose storage_path, so a note can be shared as
+      .../student-hub/?note=<note_id>.
+   Part 2 adds the RPCs, the storage-safe deletes and the scoped anon policies.
+   ----------------------------------------------------------------------------------------------- */
+
+begin;
+
+/* -----------------------------------------------------------------------------------------------
+   1. Multi-meeting support: id becomes the primary key, one row per teacher no longer applies.
+   ----------------------------------------------------------------------------------------------- */
+alter table public.live_meetings add column if not exists id uuid;
+update public.live_meetings set id = gen_random_uuid() where id is null;
+alter table public.live_meetings alter column id set default gen_random_uuid();
+alter table public.live_meetings alter column id set not null;
+
+alter table public.live_meetings drop constraint if exists live_meetings_pkey;
+alter table public.live_meetings add constraint live_meetings_pkey primary key (id);
+
+alter table public.live_meetings add column if not exists meeting_title text;
+alter table public.live_meetings add column if not exists scheduled_start timestamptz;
+alter table public.live_meetings add column if not exists status text;
+
+update public.live_meetings
+   set meeting_title = coalesce(nullif(btrim(meeting_title), ''), nullif(btrim(topic), ''), 'Live class'),
+       scheduled_start = coalesce(scheduled_start, updated_at, created_at, now()),
+       status = coalesce(
+         nullif(btrim(status), ''),
+         case when is_live then 'live' else 'scheduled' end
+       )
+ where meeting_title is null or scheduled_start is null or status is null;
+
+alter table public.live_meetings alter column meeting_title set default '';
+alter table public.live_meetings alter column status set default 'scheduled';
+alter table public.live_meetings alter column status set not null;
+
+alter table public.live_meetings drop constraint if exists live_meetings_status_check;
+alter table public.live_meetings add constraint live_meetings_status_check
+  check (status in ('scheduled', 'live', 'ended'));
+
+alter table public.live_meetings drop constraint if exists live_meetings_title_length;
+alter table public.live_meetings add constraint live_meetings_title_length
+  check (char_length(meeting_title) <= 140);
+
+create index if not exists live_meetings_scope_idx
+  on public.live_meetings (teacher_id, batch_name, scheduled_start desc);
+create index if not exists live_meetings_window_idx
+  on public.live_meetings (expires_at);
+create index if not exists live_meetings_teacher_state_idx
+  on public.live_meetings (teacher_id, status);
+
+/* Effective state is derived from the clock, so a stored 'scheduled' row flips to 'live' at its
+   start time without needing a write. A manually cancelled row keeps status = 'ended'. */
+create or replace function public.student_hub_meeting_state(
+  p_scheduled_start timestamptz,
+  p_expires_at timestamptz,
+  p_status text
+)
+returns text language sql stable set search_path = public as $$
+  select case
+    when coalesce(btrim(p_status), '') = 'ended' then 'ended'
+    when p_scheduled_start is not null and p_scheduled_start > now() then 'scheduled'
+    when p_expires_at is not null and p_expires_at > now() then 'live'
+    when p_scheduled_start is not null then 'ended'
+    else 'scheduled'
+  end;
+$$;
+
+revoke all on function public.student_hub_meeting_state(timestamptz, timestamptz, text) from public, anon, authenticated;
+grant execute on function public.student_hub_meeting_state(timestamptz, timestamptz, text) to anon, authenticated;
+
+/* Keep expires_at, is_live and the legacy topic column in step with the canonical columns. */
+create or replace function public.student_hub_meeting_sync()
+returns trigger language plpgsql set search_path = public as $$
+declare
+  v_duration integer := greatest(1, least(480, coalesce(new.duration_minutes, 45)));
+begin
+  new.duration_minutes := v_duration;
+  new.meeting_title := left(btrim(coalesce(nullif(btrim(new.meeting_title), ''), nullif(btrim(new.topic), ''), 'Live class')), 140);
+  new.topic := new.meeting_title;
+  new.batch_name := coalesce(nullif(btrim(new.batch_name), ''), 'General');
+  new.scheduled_start := coalesce(new.scheduled_start, now());
+  new.expires_at := new.scheduled_start + (v_duration || ' minutes')::interval;
+
+  if coalesce(btrim(new.status), '') = 'ended' then
+    -- Explicit cancel stays cancelled.
+    new.is_live := false;
+  else
+    new.status := public.student_hub_meeting_state(new.scheduled_start, new.expires_at, null);
+    new.is_live := new.status = 'live';
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+
+drop trigger if exists trg_student_hub_meeting_sync on public.live_meetings;
+create trigger trg_student_hub_meeting_sync
+  before insert or update on public.live_meetings
+  for each row execute function public.student_hub_meeting_sync();
+
+/* -----------------------------------------------------------------------------------------------
+   2. Notes: stable shareable id + storage_path exposed for the Storage API.
+   ----------------------------------------------------------------------------------------------- */
+alter table public.student_notes add column if not exists storage_path text;
+
+update public.student_notes
+   set storage_path = file_path
+ where storage_path is null and file_path is not null;
+
+/* New notes keep storage_path in step with the physical file path. */
+create or replace function public.student_hub_note_storage_path()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  new.storage_path := coalesce(nullif(btrim(new.storage_path), ''), new.file_path);
+  return new;
+end $$;
+
+drop trigger if exists trg_student_hub_note_storage_path on public.student_notes;
+create trigger trg_student_hub_note_storage_path
+  before insert or update on public.student_notes
+  for each row execute function public.student_hub_note_storage_path();
+
+/* The column list changes, so the view is recreated instead of replaced. */
+drop view if exists public.notes;
+
+create view public.notes with (security_invoker = true) as
+select n.id, n.teacher_id, n.teacher_name, n.batch_name, n.title, n.subject, n.kind, n.body,
+       n.file_path,
+       coalesce(n.storage_path, n.file_path) as storage_path,
+       n.file_name, n.mime_type, n.file_size, n.folder_id,
+       f.name as folder_name, f.batch_name as folder_batch_name,
+       n.created_at, n.updated_at
+  from public.student_notes n
+  left join public.folders f
+    on f.id = n.folder_id
+   and f.teacher_id = n.teacher_id
+   and f.batch_name = n.batch_name;
+
+revoke all on public.notes from public, anon, authenticated;
+grant select on public.notes to anon, authenticated;
+
+commit;
+
+-- ============ 20261122182349_student_hub_meeting_rpcs_share.sql ============
+/* -----------------------------------------------------------------------------------------------
+   Coaching Sathi — Student Hub v3, part 2 of 2: teacher RPCs, storage-safe deletes and RLS.
+
+   1. save_my_meeting / delete_my_meeting let a teacher own many meetings (scheduled or live).
+   2. delete_my_student_note and delete_me only touch database rows. Storage objects are removed
+      by the client through the Storage API, because deleting storage.objects in SQL raises
+      "Direct deletion from storage tables is not allowed. Use the Storage API instead."
+   3. student_hub_snapshot returns a `meetings` array (live + upcoming, scoped to batch + teacher),
+      and the anon SELECT policy no longer exposes ended meetings.
+   ----------------------------------------------------------------------------------------------- */
+
+begin;
+
+/* -----------------------------------------------------------------------------------------------
+   3. Teacher RPCs — create / reschedule / cancel many meetings.
+   ----------------------------------------------------------------------------------------------- */
+create or replace function public.save_my_meeting(
+  p_id uuid default null,
+  p_meeting_title text default '',
+  p_meeting_url text default '',
+  p_batch_name text default 'General',
+  p_teacher_name text default '',
+  p_scheduled_start timestamptz default null,
+  p_duration_minutes integer default 45
+)
+returns public.live_meetings language plpgsql security definer set search_path = public, auth as $$
+declare
+  who uuid := auth.uid();
+  v_title text := left(btrim(coalesce(p_meeting_title, '')), 140);
+  v_url text := btrim(coalesce(p_meeting_url, ''));
+  v_batch text := btrim(coalesce(p_batch_name, ''));
+  v_teacher text := left(btrim(coalesce(p_teacher_name, '')), 120);
+  v_start timestamptz := coalesce(p_scheduled_start, now());
+  v_duration integer := coalesce(p_duration_minutes, 45);
+  v_row public.live_meetings;
+begin
+  if who is null then raise exception 'not authenticated' using errcode = '28000'; end if;
+  if v_title = '' then raise exception 'add a class title' using errcode = '22023'; end if;
+  if v_url <> '' and v_url !~* '^https?://' then
+    raise exception 'meeting link must start with http:// or https://' using errcode = '22023';
+  end if;
+  if v_batch = '' then v_batch := 'General'; end if;
+  if char_length(v_batch) > 80 then raise exception 'batch name is too long' using errcode = '22023'; end if;
+  if v_duration < 1 or v_duration > 480 then
+    raise exception 'duration must be between 1 and 480 minutes' using errcode = '22023';
+  end if;
+  if v_start < now() - interval '1 day' or v_start > now() + interval '365 days' then
+    raise exception 'pick a start time within the next year' using errcode = '22023';
+  end if;
+
+  if p_id is null then
+    insert into public.live_meetings (
+      teacher_id, teacher_name, batch_name, meeting_title, topic, meeting_url,
+      scheduled_start, duration_minutes, status
+    ) values (
+      who, v_teacher, v_batch, v_title, v_title, v_url,
+      v_start, v_duration, 'scheduled'
+    ) returning * into v_row;
+  else
+    update public.live_meetings
+       set meeting_title = v_title,
+           topic = v_title,
+           meeting_url = v_url,
+           batch_name = v_batch,
+           teacher_name = v_teacher,
+           scheduled_start = v_start,
+           duration_minutes = v_duration,
+           status = 'scheduled'
+     where id = p_id and teacher_id = who
+     returning * into v_row;
+    if v_row.id is null then
+      raise exception 'meeting not found' using errcode = '42501';
+    end if;
+  end if;
+  return v_row;
+end $$;
+
+revoke all on function public.save_my_meeting(uuid, text, text, text, text, timestamptz, integer) from public, anon, authenticated;
+grant execute on function public.save_my_meeting(uuid, text, text, text, text, timestamptz, integer) to authenticated;
+
+create or replace function public.delete_my_meeting(p_id uuid)
+returns boolean language plpgsql security definer set search_path = public, auth as $$
+declare
+  who uuid := auth.uid();
+  v_count integer;
+begin
+  if who is null then raise exception 'not authenticated' using errcode = '28000'; end if;
+  delete from public.live_meetings where id = p_id and teacher_id = who;
+  get diagnostics v_count = row_count;
+  return v_count > 0;
+end $$;
+
+revoke all on function public.delete_my_meeting(uuid) from public, anon, authenticated;
+grant execute on function public.delete_my_meeting(uuid) to authenticated;
+
+/* v2 compatibility: "start the class for this batch now" (creates or refreshes one meeting). */
+create or replace function public.set_my_batch_meeting(
+  p_topic text default '',
+  p_meeting_url text default '',
+  p_is_live boolean default false,
+  p_batch_name text default 'General',
+  p_teacher_name text default '',
+  p_duration_minutes integer default 45,
+  p_expires_at timestamptz default null
+)
+returns public.live_meetings language plpgsql security definer set search_path = public, auth as $$
+declare
+  who uuid := auth.uid();
+  v_batch text := coalesce(nullif(btrim(p_batch_name), ''), 'General');
+  v_topic text := btrim(coalesce(p_topic, ''));
+  v_id uuid;
+  v_row public.live_meetings;
+begin
+  if who is null then raise exception 'not authenticated' using errcode = '28000'; end if;
+  if p_is_live and v_topic = '' then
+    raise exception 'add a class title and meeting link before going live' using errcode = '22023';
+  end if;
+
+  select id into v_id
+    from public.live_meetings
+   where teacher_id = who and batch_name = v_batch
+     and public.student_hub_meeting_state(scheduled_start, expires_at, status) in ('scheduled', 'live')
+   order by scheduled_start desc
+   limit 1;
+
+  if coalesce(p_is_live, false) then
+    return public.save_my_meeting(v_id, v_topic, p_meeting_url, v_batch, p_teacher_name, now(), p_duration_minutes);
+  end if;
+
+  if v_id is null then
+    select * into v_row from public.live_meetings where teacher_id = who order by updated_at desc limit 1;
+    if v_row.id is null then
+      raise exception 'no meeting to stop' using errcode = 'P0002';
+    end if;
+    return v_row;
+  end if;
+
+  update public.live_meetings set status = 'ended' where id = v_id returning * into v_row;
+  return v_row;
+end $$;
+
+revoke all on function public.set_my_batch_meeting(text, text, boolean, text, text, integer, timestamptz) from public, anon, authenticated;
+grant execute on function public.set_my_batch_meeting(text, text, boolean, text, text, integer, timestamptz) to authenticated;
+
+/* -----------------------------------------------------------------------------------------------
+   4. Note deletion: metadata only. The client removes the object with the Storage API first.
+   ----------------------------------------------------------------------------------------------- */
+create or replace function public.delete_my_student_note(p_note_id uuid)
+returns boolean language plpgsql security definer set search_path = public, auth as $$
+declare
+  who uuid := auth.uid();
+  v_count integer;
+begin
+  if who is null then raise exception 'not authenticated' using errcode = '28000'; end if;
+  delete from public.student_notes where id = p_note_id and teacher_id = who;
+  get diagnostics v_count = row_count;
+  return v_count > 0;
+end $$;
+
+revoke all on function public.delete_my_student_note(uuid) from public, anon, authenticated;
+grant execute on function public.delete_my_student_note(uuid) to authenticated;
+
+/* Account deletion: database rows only. Storage objects are removed by the client through the
+   Storage API before this RPC runs, because direct storage.objects deletes are blocked. */
+create or replace function public.delete_me()
+returns void language plpgsql security definer set search_path = public, auth as $$
+declare who uuid := auth.uid();
+begin
+  if who is null then
+    raise exception 'not authenticated' using errcode = '28000';
+  end if;
+  delete from public.student_notes where teacher_id = who;
+  delete from public.folders where teacher_id = who;
+  delete from public.live_meetings where teacher_id = who;
+  delete from public.cloud_backups where user_id = who;
+  delete from public.sync_log where user_id = who;
+  delete from public.app_state where user_id = who;
+  delete from public.profiles where id = who;
+  delete from auth.users where id = who;
+end $$;
+
+revoke all on function public.delete_me() from public, anon, authenticated;
+grant execute on function public.delete_me() to authenticated, service_role;
+
+/* -----------------------------------------------------------------------------------------------
+   5. Anon read RPC — scoped to both batch and teacher, live + upcoming meetings only.
+   ----------------------------------------------------------------------------------------------- */
+create or replace function public.student_hub_snapshot(p_batch_name text, p_teacher_id uuid)
+returns jsonb language plpgsql security definer set search_path = public, auth as $$
+declare
+  v_batch text := btrim(coalesce(p_batch_name, ''));
+begin
+  if p_teacher_id is null or v_batch = '' or char_length(v_batch) > 80 then
+    raise exception 'invalid student hub scope' using errcode = '22023';
+  end if;
+  if not public.student_hub_scope_matches(v_batch, p_teacher_id::text) then
+    raise exception 'student hub scope headers must match the requested batch and teacher' using errcode = '42501';
+  end if;
+  return (
+    select jsonb_build_object(
+      'meetings', coalesce((
+        select jsonb_agg(to_jsonb(m) order by m.scheduled_start) from (
+          select id, teacher_id, teacher_name, batch_name,
+                 coalesce(nullif(btrim(meeting_title), ''), topic) as meeting_title,
+                 meeting_url, meeting_link, scheduled_start, duration_minutes, expires_at,
+                 public.student_hub_meeting_state(scheduled_start, expires_at, status) as status,
+                 created_at, updated_at
+            from public.live_meetings
+           where teacher_id = p_teacher_id
+             and batch_name = v_batch
+             and public.student_hub_meeting_state(scheduled_start, expires_at, status) in ('scheduled', 'live')
+           order by scheduled_start
+           limit 20
+        ) m
+      ), '[]'::jsonb),
+      -- Kept for older portals: the meeting that is live right now, if any.
+      'meeting', coalesce((
+        select to_jsonb(m) from (
+          select id, teacher_id, teacher_name, batch_name,
+                 coalesce(nullif(btrim(meeting_title), ''), topic) as meeting_title,
+                 meeting_url, meeting_link, scheduled_start, duration_minutes, expires_at,
+                 public.student_hub_meeting_state(scheduled_start, expires_at, status) as status,
+                 created_at, updated_at
+            from public.live_meetings
+           where teacher_id = p_teacher_id
+             and batch_name = v_batch
+             and public.student_hub_meeting_state(scheduled_start, expires_at, status) = 'live'
+           order by scheduled_start
+           limit 1
+        ) m
+      ), 'null'::jsonb),
+      'folders', coalesce((
+        select jsonb_agg(to_jsonb(f) order by f.name) from (
+          select id, teacher_id, batch_name, name, created_at
+            from public.folders
+           where teacher_id = p_teacher_id and batch_name = v_batch
+        ) f
+      ), '[]'::jsonb),
+      'notes', coalesce((
+        select jsonb_agg(to_jsonb(n) order by n.created_at desc) from (
+          select n.id, n.teacher_id, n.teacher_name, n.batch_name, n.title, n.subject, n.kind,
+                 n.body, n.file_path, coalesce(n.storage_path, n.file_path) as storage_path,
+                 n.file_name, n.mime_type, n.file_size, n.folder_id,
+                 f.name as folder_name, n.created_at
+            from public.student_notes n
+            left join public.folders f
+              on f.id = n.folder_id and f.teacher_id = n.teacher_id and f.batch_name = n.batch_name
+           where n.teacher_id = p_teacher_id and n.batch_name = v_batch
+           order by n.created_at desc
+           limit 200
+        ) n
+      ), '[]'::jsonb)
+    )
+  );
+end $$;
+
+revoke all on function public.student_hub_snapshot(text, uuid) from public, anon, authenticated;
+grant execute on function public.student_hub_snapshot(text, uuid) to anon, authenticated;
+
+/* -----------------------------------------------------------------------------------------------
+   6. RLS — anon sees only scoped, non-ended meetings; writes stay teacher-only.
+   ----------------------------------------------------------------------------------------------- */
+alter table public.live_meetings enable row level security;
+
+drop policy if exists student_hub_live_meetings_scoped_select on public.live_meetings;
+create policy student_hub_live_meetings_scoped_select on public.live_meetings
+  for select to anon
+  using (
+    public.student_hub_scope_matches(batch_name, teacher_id::text)
+    and public.student_hub_meeting_state(scheduled_start, expires_at, status) in ('scheduled', 'live')
+  );
+
+commit;
 ```
 
-Verification queries used on the live project:
+### Verification (rolled back, safe to run)
 
 ```sql
--- No scope headers => zero content rows; directory is still readable.
-begin; set local role anon;
-select (select count(*) from public.live_meetings) as meetings_no_scope,
-       (select count(*) from public.student_notes) as notes_no_scope,
-       (select count(*) from public.folders) as folders_no_scope,
-       (select count(*) from public.notes) as notes_view_no_scope,
-       (select count(*) from public.student_hub_directory) as directory_no_scope;
-rollback;
+-- Teacher side: create two meetings (one live now, one tomorrow), then read them back as anon.
+begin;
+select set_config('request.jwt.claims',
+  '{"sub":"<teacher-uuid>","role":"authenticated"}', true);
+set local role authenticated;
+select public.save_my_meeting(null, 'Maths live now', 'https://meet.google.com/aaa-bbbb-ccc',
+                              'General', 'Vinay', now(), 45) is not null as created_live,
+       public.save_my_meeting(null, 'Maths tomorrow', 'https://meet.google.com/ddd-eeee-fff',
+                              'General', 'Vinay', now() + interval '1 day', 90) is not null as created_future;
 
--- Matching scope headers => only that batch + teacher's rows; guarded snapshot succeeds.
-begin; set local role anon;
+select count(*) as my_meetings,
+       count(*) filter (where status = 'live') as live_rows,
+       count(*) filter (where status = 'scheduled') as scheduled_rows
+  from public.live_meetings where teacher_id = '<teacher-uuid>';
+
+-- Student side: the same scope headers the portal sends.
+set local role anon;
 select set_config('request.headers',
-  '{"x-student-hub-batch":"General","x-student-hub-teacher-id":"f939765c-95ac-4870-9de1-43899822987e"}', true);
-select (select count(*) from public.live_meetings) as meetings_scoped,
-       (select count(*) from public.student_hub_directory) as directory,
-       jsonb_object_keys(public.student_hub_snapshot('General','f939765c-95ac-4870-9de1-43899822987e')) as snapshot_key;
+  '{"x-student-hub-batch":"General","x-student-hub-teacher-id":"<teacher-uuid>"}', true);
+select jsonb_array_length(public.student_hub_snapshot('General','<teacher-uuid>')->'meetings') as anon_meetings,
+       (select count(*) from public.live_meetings) as anon_direct_rows;
 rollback;
 
--- No headers => snapshot guard raises 42501.
-begin; set local role anon;
-select public.student_hub_snapshot('General','f939765c-95ac-4870-9de1-43899822987e');
+-- Ended meetings must never be readable by anon:
+begin;
+set local role anon;
+select set_config('request.headers',
+  '{"x-student-hub-batch":"General","x-student-hub-teacher-id":"<teacher-uuid>"}', true);
+select count(*) from public.live_meetings
+ where public.student_hub_meeting_state(scheduled_start, expires_at, status) = 'ended'; -- 0
 rollback;
 ```
 
 ---
 
-## 2) Teacher App (`index.html` / JS/TS updates)
+## 2) Teacher Hub (`index.html` / JS & CSS fixes)
 
-The 4-icon bottom nav is unchanged: Hub remains far-left, attendance remains the default landing. Pass the currently selected batch into `StudentHubManager` in `src/App.tsx`:
+### `src/App.tsx` — unchanged wiring, batch passed through
 
 ```tsx
         {page === 'hub' && <StudentHubManager teacher={teacher} batches={state.batches.map((b) => b.name)} initialBatchName={batch.id === '__none' ? '' : batch.name} say={say} ask={ask} />}
@@ -1424,20 +1856,29 @@ export const MIN_DURATION_MINUTES = 1
 export const MAX_DURATION_MINUTES = 480
 export const MEETING_DURATION_PRESETS = [30, 45, 60] as const
 export const UNFILED_FOLDER = 'Unfiled'
+/** A teacher can schedule this far ahead; the RPC enforces the same bound. */
+export const MAX_SCHEDULE_DAYS = 365
 
 export type StudentNoteKind = 'file' | 'link' | 'text'
+export type MeetingStatus = 'scheduled' | 'live' | 'ended'
+export type DurationUnit = 'minutes' | 'hours'
 
 export interface LiveMeeting {
+  id: string
   teacher_id: string
   teacher_name: string
   batch_name: string
+  /** Canonical title column (falls back to the legacy `topic`). */
+  meeting_title: string
   topic: string
   meeting_url: string
   /** Generated column: always equal to meeting_url (the spec's `meeting_link`). */
   meeting_link: string
+  scheduled_start: string | null
   is_live: boolean
   duration_minutes: number
   expires_at: string | null
+  status: MeetingStatus
   created_at: string
   updated_at: string
 }
@@ -1472,11 +1913,14 @@ export interface StudentNote {
 }
 
 export interface MeetingInput {
-  topic: string
-  meeting_url: string
-  is_live: boolean
+  /** null = create a new meeting, otherwise reschedule this one. */
+  id?: string | null
+  title: string
+  meetingUrl: string
   batchName: string
   teacherName: string
+  /** ISO timestamp. `null`/omitted means "start now". */
+  scheduledStart?: string | null
   durationMinutes: number
 }
 
@@ -1517,17 +1961,74 @@ export function meetingExpiresAt(durationMinutes: number, now = Date.now()): str
   return new Date(now + normaliseDuration(durationMinutes) * 60_000).toISOString()
 }
 
-export function isMeetingActive(meeting: LiveMeeting | null, now = Date.now()): boolean {
-  if (!meeting || meeting.is_live !== true) return false
-  if (!safeHttpUrl(meeting.meeting_url)) return false
+/** Minutes <-> hours toggle. `1.5` hours becomes `90` minutes before it reaches Supabase. */
+export function toDurationMinutes(value: number | string, unit: DurationUnit): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_DURATION_MINUTES
+  return normaliseDuration(unit === 'hours' ? n * 60 : n)
+}
+
+/** "45 Mins" / "1 Hr 30 Mins" / "2 Hrs" — used by both apps. */
+export function formatDurationLabel(durationMinutes: number | null | undefined): string {
+  const total = normaliseDuration(Number(durationMinutes ?? DEFAULT_DURATION_MINUTES))
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+  if (!hours) return `${minutes} Mins`
+  if (!minutes) return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'}`
+  return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'} ${minutes} Mins`
+}
+
+/** Effective state from the clock, matching the DB's student_hub_meeting_state(). */
+export function meetingState(meeting: LiveMeeting | null, now = Date.now()): MeetingStatus {
+  if (!meeting) return 'ended'
+  if (meeting.status === 'ended') return 'ended'
+  const start = Date.parse(meeting.scheduled_start ?? meeting.created_at ?? '')
   const expiry = Date.parse(meeting.expires_at ?? '')
-  return Number.isFinite(expiry) ? expiry > now : true
+  if (Number.isFinite(start) && start > now) return 'scheduled'
+  if (Number.isFinite(expiry) && expiry > now) return 'live'
+  return Number.isFinite(start) ? 'ended' : 'scheduled'
+}
+
+export function isMeetingActive(meeting: LiveMeeting | null, now = Date.now()): boolean {
+  if (!meeting) return false
+  if (meetingState(meeting, now) !== 'live') return false
+  return Boolean(safeHttpUrl(meeting.meeting_url || meeting.meeting_link))
 }
 
 export function remainingMs(meeting: LiveMeeting | null, now = Date.now()): number {
   if (!meeting?.expires_at) return 0
   const expiry = Date.parse(meeting.expires_at)
   return Number.isFinite(expiry) ? Math.max(0, expiry - now) : 0
+}
+
+/** Milliseconds until a scheduled meeting starts (0 when it has already started). */
+export function startsInMs(meeting: LiveMeeting | null, now = Date.now()): number {
+  if (!meeting?.scheduled_start) return 0
+  const start = Date.parse(meeting.scheduled_start)
+  return Number.isFinite(start) ? Math.max(0, start - now) : 0
+}
+
+export function meetingTitle(meeting: LiveMeeting | null): string {
+  return cleanLine(meeting?.meeting_title || meeting?.topic, 140) || 'Live class'
+}
+
+/** Deep link a student can open directly: .../student-hub/?note=<note_id> */
+export function noteShareUrl(noteId: string): string {
+  const base = studentHubUrl()
+  const id = cleanLine(noteId, 64)
+  return id ? `${base}?note=${encodeURIComponent(id)}` : base
+}
+
+/** Local <-> ISO helpers for <input type="datetime-local">. */
+export function toLocalInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+export function fromLocalInputValue(value: string): string | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
 export async function copyToClipboard(value: string): Promise<void> {
@@ -1554,31 +2055,50 @@ export async function currentTeacherId(): Promise<string> {
   return data.user.id
 }
 
-export async function fetchMyMeeting(teacherId: string): Promise<LiveMeeting | null> {
-  const { data, error } = await sb().from('live_meetings').select('*').eq('teacher_id', teacherId).maybeSingle()
+/** Every meeting this teacher owns (all batches), newest schedule first. */
+export async function fetchMyMeetings(teacherId: string): Promise<LiveMeeting[]> {
+  const { data, error } = await sb()
+    .from('live_meetings')
+    .select('*')
+    .eq('teacher_id', teacherId)
+    .order('scheduled_start', { ascending: true })
   if (error) throw error
-  return (data as LiveMeeting | null) ?? null
+  return (data ?? []) as LiveMeeting[]
 }
 
+/** Create a new meeting, or reschedule one the teacher already owns. */
 export async function saveMyMeeting(input: MeetingInput): Promise<LiveMeeting> {
-  const topic = cleanLine(input.topic, 140)
-  const meetingUrl = input.meeting_url.trim() ? safeHttpUrl(input.meeting_url) : null
-  if (input.meeting_url.trim() && !meetingUrl) throw new Error('Enter a valid http:// or https:// meeting link.')
-  if (input.is_live && (!topic || !meetingUrl)) throw new Error('Add a class title and meeting link before going live.')
-  const duration = normaliseDuration(input.durationMinutes)
-  const { data, error } = await sb().rpc('set_my_batch_meeting', {
-    p_topic: topic,
+  const title = cleanLine(input.title, 140)
+  if (!title) throw new Error('Add a class title first.')
+  const rawUrl = input.meetingUrl.trim()
+  const meetingUrl = rawUrl ? safeHttpUrl(rawUrl) : null
+  if (rawUrl && !meetingUrl) throw new Error('Enter a valid http:// or https:// meeting link.')
+
+  const scheduledStart = input.scheduledStart ?? new Date().toISOString()
+  const startMs = Date.parse(scheduledStart)
+  if (!Number.isFinite(startMs)) throw new Error('Pick a valid start date and time.')
+  if (startMs > Date.now() + MAX_SCHEDULE_DAYS * 86_400_000) {
+    throw new Error('Pick a start time within the next year.')
+  }
+
+  const { data, error } = await sb().rpc('save_my_meeting', {
+    p_id: input.id ?? null,
+    p_meeting_title: title,
     p_meeting_url: meetingUrl ?? '',
-    p_is_live: input.is_live,
     p_batch_name: cleanLine(input.batchName, 80) || DEFAULT_BATCH_NAME,
     p_teacher_name: cleanLine(input.teacherName, 120),
-    p_duration_minutes: duration,
-    // The DB recomputes/validates this from `now() + duration`, so clock skew cannot extend a class.
-    p_expires_at: meetingExpiresAt(duration),
+    p_scheduled_start: new Date(startMs).toISOString(),
+    p_duration_minutes: normaliseDuration(input.durationMinutes),
   })
   if (error) throw error
-  if (!data) throw new Error('The live meeting could not be saved. Try again.')
+  if (!data) throw new Error('The meeting could not be saved. Try again.')
   return data as LiveMeeting
+}
+
+export async function deleteMeeting(meetingId: string): Promise<void> {
+  const { data, error } = await sb().rpc('delete_my_meeting', { p_id: meetingId })
+  if (error) throw error
+  if (data !== true) throw new Error('This meeting was already removed.')
 }
 
 /** Folders are ALREADY scoped to the selected batch — no cross-batch rows can leak in. */
@@ -1703,10 +2223,40 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
   }
 }
 
-export async function deleteStudentNote(noteId: string): Promise<void> {
-  const { data, error } = await sb().rpc('delete_my_student_note', { p_note_id: noteId })
+/**
+ * Delete a note the way Supabase requires: the object goes first through the Storage API, then the
+ * metadata row. Deleting `storage.objects` rows in SQL is rejected with
+ * "Direct deletion from storage tables is not allowed. Use the Storage API instead."
+ */
+export async function deleteStudentNote(note: Pick<StudentNote, 'id' | 'file_path'>): Promise<void> {
+  const path = cleanLine(note.file_path, 500)
+  if (path) {
+    const { error } = await sb().storage.from(STUDENT_NOTES_BUCKET).remove([path])
+    // A missing object is fine — the metadata row still has to go. Any other failure stops here so
+    // the teacher never ends up with a row pointing at a file that still exists.
+    if (error && !/not\s*found|does not exist/i.test(error.message ?? '')) {
+      throw new Error('Could not delete the stored file. Check your connection and try again.')
+    }
+  }
+  const { data, error } = await sb()
+    .from('student_notes')
+    .delete()
+    .eq('id', note.id)
+    .select('id')
   if (error) throw error
-  if (data !== true) throw new Error('This note was already removed.')
+  if (!Array.isArray(data) || !data.length) throw new Error('This note was already removed.')
+}
+
+/** Removes every Storage object in this teacher's folder before the account row is wiped. */
+export async function purgeMyNoteFiles(teacherId: string): Promise<void> {
+  try {
+    const { data, error } = await sb().storage.from(STUDENT_NOTES_BUCKET).list(teacherId, { limit: 1000 })
+    if (error || !Array.isArray(data) || !data.length) return
+    const paths = data.map((item) => `${teacherId}/${item.name}`)
+    await sb().storage.from(STUDENT_NOTES_BUCKET).remove(paths)
+  } catch {
+    // Never block account deletion on storage cleanup; the DB rows are the source of truth.
+  }
 }
 
 /** Private bucket: a short-lived signed URL, created only for the signed-in teacher's own files. */
@@ -1728,6 +2278,7 @@ import { motion } from 'framer-motion'
 import {
   AlertCircle,
   BookOpen,
+  CalendarClock,
   Check,
   Clock3,
   Copy,
@@ -1738,10 +2289,12 @@ import {
   GraduationCap,
   Link2,
   Loader2,
+  PlayCircle,
   Radio,
   Timer,
   Trash2,
   Upload,
+  Users,
   Video,
   WifiOff,
 } from 'lucide-react'
@@ -1756,24 +2309,32 @@ import {
   currentTeacherId,
   DEFAULT_BATCH_NAME,
   DEFAULT_DURATION_MINUTES,
+  deleteMeeting,
   deleteStudentFolder,
   deleteStudentNote,
   fetchMyFolders,
-  fetchMyMeeting,
+  fetchMyMeetings,
   fetchMyNotes,
   formatBytes,
-  isMeetingActive,
+  formatDurationLabel,
+  fromLocalInputValue,
   MAX_DURATION_MINUTES,
   MEETING_DURATION_PRESETS,
-  meetingExpiresAt,
+  meetingState,
+  meetingTitle,
   MIN_DURATION_MINUTES,
-  normaliseDuration,
+  noteShareUrl,
   safeHttpUrl,
-  signedNoteUrl,
   saveMyMeeting,
+  signedNoteUrl,
+  startsInMs,
   studentHubUrl,
+  toDurationMinutes,
+  toLocalInputValue,
   UNFILED_FOLDER,
+  type DurationUnit,
   type LiveMeeting,
+  type MeetingStatus,
   type StudentFolder,
   type StudentNote,
   type StudentNoteKind,
@@ -1788,14 +2349,36 @@ interface Props {
   ask: (confirm: Omit<Confirm, 'run'>, run: () => void) => void
 }
 
-const field = 'w-full rounded-2xl border border-white/15 bg-black/25 px-4 py-3 text-[15px] outline-none placeholder:text-white/35 focus:border-white/45'
+const field = 'w-full min-w-0 rounded-xl border border-white/15 bg-black/25 px-4 py-3 text-[15px] outline-none placeholder:text-white/35 focus:border-white/45 focus:ring-2 focus:ring-white/15'
 const label = 'mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-white/70'
-const action = 'lens glass-btn relative z-10 inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-[14px] font-semibold disabled:opacity-40'
-const chip = 'glass-btn relative z-10 inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold'
+const action = 'lens glass-btn relative z-10 inline-flex h-11 flex-wrap items-center justify-center gap-2 rounded-xl px-5 text-[14px] font-semibold disabled:opacity-40'
+const smallAction = 'glass-btn inline-flex h-9 flex-wrap items-center justify-center gap-1.5 rounded-xl bg-white/8 px-3 text-[12px] font-semibold text-white/85 hover:bg-white/14 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40'
+const chip = 'glass-btn relative z-10 inline-flex h-9 flex-wrap items-center gap-1.5 rounded-xl px-3 text-[12px] font-semibold'
+const card = 'glass glass-deep relative z-10 rounded-3xl p-5 sm:p-6'
+const stack = 'flex flex-wrap items-center gap-3'
 
-function formatWhen(iso: string): string {
+function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return ''
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+function relativeStart(meeting: LiveMeeting, now: number): string {
+  const ms = startsInMs(meeting, now)
+  if (ms <= 0) return ''
+  const minutes = Math.ceil(ms / 60_000)
+  if (minutes < 60) return `in ${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `in ${hours} hr ${minutes % 60 ? `${minutes % 60} min` : ''}`.trim()
+  return `in ${Math.floor(hours / 24)} day${Math.floor(hours / 24) === 1 ? '' : 's'}`
 }
 
 function noteTypeLabel(kind: StudentNoteKind): string {
@@ -1803,6 +2386,20 @@ function noteTypeLabel(kind: StudentNoteKind): string {
   if (kind === 'link') return 'Link'
   return 'Text note'
 }
+
+const STATUS_STYLE: Record<MeetingStatus, string> = {
+  live: 'bg-present/15 text-present ring-1 ring-present/35',
+  scheduled: 'bg-sky-400/15 text-sky-100 ring-1 ring-sky-300/30',
+  ended: 'bg-white/8 text-white/55 ring-1 ring-white/15',
+}
+
+const STATUS_LABEL: Record<MeetingStatus, string> = {
+  live: 'LIVE NOW',
+  scheduled: 'SCHEDULED',
+  ended: 'EXPIRED',
+}
+
+const STATUS_ORDER: Record<MeetingStatus, number> = { live: 0, scheduled: 1, ended: 2 }
 
 export default function StudentHubManager({ teacher, batches, initialBatchName, say, ask }: Props) {
   const teacherName = cleanLine(teacher.name, 120)
@@ -1815,19 +2412,25 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
   const [loading, setLoading] = useState(true)
   const [teacherId, setTeacherId] = useState<string | null>(null)
-  const [meeting, setMeeting] = useState<LiveMeeting | null>(null)
+  const [meetings, setMeetings] = useState<LiveMeeting[]>([])
   const [folders, setFolders] = useState<StudentFolder[]>([])
   const [notes, setNotes] = useState<StudentNote[]>([])
   const [noteUrls, setNoteUrls] = useState<Record<string, { open: string; download: string }>>({})
-  const [topic, setTopic] = useState('')
-  const [meetingUrl, setMeetingUrl] = useState('')
-  const [isLive, setIsLive] = useState(false)
-  const [duration, setDuration] = useState(DEFAULT_DURATION_MINUTES)
-  const [customDuration, setCustomDuration] = useState('')
+
+  // Meeting form — one date/time clock, one duration with a Minutes/Hours unit.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [meetingFormTitle, setMeetingFormTitle] = useState('')
+  const [meetingFormUrl, setMeetingFormUrl] = useState('')
+  const [startLocal, setStartLocal] = useState(() => toLocalInputValue(new Date()))
+  const [durationValue, setDurationValue] = useState(String(DEFAULT_DURATION_MINUTES))
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>('minutes')
+
   const [busy, setBusy] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
   const [kind, setKind] = useState<StudentNoteKind>('file')
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
@@ -1837,6 +2440,15 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
   const [file, setFile] = useState<File | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
 
+  const durationMinutes = toDurationMinutes(durationValue, durationUnit)
+  const scheduledIso = fromLocalInputValue(startLocal)
+
+  // Live badges and countdowns tick without re-fetching anything.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
+
   // Reload everything when the teacher switches batches. Folders/notes only ever come back for
   // (teacher_id, batch_name), so a different batch can never show another batch's materials.
   useEffect(() => {
@@ -1844,18 +2456,14 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     void (async () => {
       try {
         const uid = await currentTeacherId()
-        const [myMeeting, myFolders, myNotes] = await Promise.all([
-          fetchMyMeeting(uid),
+        const [myMeetings, myFolders, myNotes] = await Promise.all([
+          fetchMyMeetings(uid),
           fetchMyFolders(uid, effectiveBatch),
           fetchMyNotes(uid, effectiveBatch),
         ])
         if (!alive) return
         setTeacherId(uid)
-        setMeeting(myMeeting)
-        setTopic(myMeeting?.topic ?? '')
-        setMeetingUrl(myMeeting?.meeting_url ?? '')
-        setIsLive(Boolean(myMeeting?.is_live))
-        setDuration(normaliseDuration(myMeeting?.duration_minutes ?? DEFAULT_DURATION_MINUTES))
+        setMeetings(myMeetings)
         setFolders(myFolders)
         setNotes(myNotes)
         setFolderName('')
@@ -1868,6 +2476,15 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     })()
     return () => { alive = false }
   }, [effectiveBatch])
+
+  const sortedMeetings = useMemo(
+    () => [...meetings].sort((a, b) => {
+      const byState = STATUS_ORDER[meetingState(a, now)] - STATUS_ORDER[meetingState(b, now)]
+      if (byState) return byState
+      return String(a.scheduled_start ?? '').localeCompare(String(b.scheduled_start ?? ''))
+    }),
+    [meetings, now],
+  )
 
   const groupedNotes = useMemo(() => {
     const groups = new Map<string, StudentNote[]>()
@@ -1913,34 +2530,84 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     if (fileInput.current) fileInput.current.value = ''
   }
 
-  const saveMeeting = async (nextLive: boolean) => {
+  const resetMeetingForm = () => {
+    setEditingId(null)
+    setMeetingFormTitle('')
+    setMeetingFormUrl('')
+    setStartLocal(toLocalInputValue(new Date()))
+    setDurationValue(String(DEFAULT_DURATION_MINUTES))
+    setDurationUnit('minutes')
+  }
+
+  const saveMeeting = async (start: string | null) => {
     if (busy) return
     setError(null)
     setStatus(null)
     setBusy(true)
     try {
       const row = await saveMyMeeting({
-        topic,
-        meeting_url: meetingUrl,
-        is_live: nextLive,
+        id: editingId,
+        title: meetingFormTitle,
+        meetingUrl: meetingFormUrl,
         batchName: effectiveBatch,
         teacherName,
-        durationMinutes: duration,
+        scheduledStart: start,
+        durationMinutes,
       })
-      setMeeting(row)
-      setTopic(row.topic)
-      setMeetingUrl(row.meeting_url)
-      setIsLive(row.is_live)
-      setDuration(normaliseDuration(row.duration_minutes))
-      const message = row.is_live
-        ? `Live class is ON — ${row.duration_minutes} mins for ${effectiveBatch}`
-        : 'Class details saved'
+      setMeetings((previous) => {
+        const rest = previous.filter((meeting) => meeting.id !== row.id)
+        return [...rest, row]
+      })
+      resetMeetingForm()
+      const stateNow = meetingState(row)
+      const message = stateNow === 'live'
+        ? `Class is LIVE for ${row.batch_name} · ${formatDurationLabel(row.duration_minutes)}`
+        : `Scheduled for ${formatWhen(row.scheduled_start)} · ${formatDurationLabel(row.duration_minutes)}`
       setStatus(message)
       say(message)
     } catch (e) {
-      setError(cloudMessage(e, 'Could not save the live meeting.'))
+      setError(cloudMessage(e, 'Could not save this meeting.'))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const startNow = async () => {
+    setStartLocal(toLocalInputValue(new Date()))
+    await saveMeeting(new Date().toISOString())
+  }
+
+  const editMeeting = (meeting: LiveMeeting) => {
+    setEditingId(meeting.id)
+    setMeetingFormTitle(meetingTitle(meeting))
+    setMeetingFormUrl(meeting.meeting_url ?? '')
+    setStartLocal(toLocalInputValue(new Date(meeting.scheduled_start ?? new Date().toISOString())))
+    const minutes = Number(meeting.duration_minutes ?? DEFAULT_DURATION_MINUTES)
+    if (minutes % 60 === 0) {
+      setDurationUnit('hours')
+      setDurationValue(String(minutes / 60))
+    } else {
+      setDurationUnit('minutes')
+      setDurationValue(String(minutes))
+    }
+    if (meeting.batch_name !== effectiveBatch) setSelectedBatch(meeting.batch_name)
+    setStatus(null)
+    setError(null)
+  }
+
+  const removeMeeting = async (meetingId: string) => {
+    setError(null)
+    setDeletingId(meetingId)
+    try {
+      await deleteMeeting(meetingId)
+      setMeetings((previous) => previous.filter((meeting) => meeting.id !== meetingId))
+      if (editingId === meetingId) resetMeetingForm()
+      setStatus('Meeting removed')
+      say('Meeting removed')
+    } catch (e) {
+      setError(cloudMessage(e, 'Could not remove this meeting.'))
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -1952,6 +2619,16 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       say('Student Hub link copied')
     } catch {
       setError('Could not copy automatically. Use the link shown below.')
+    }
+  }
+
+  const copyNoteLink = async (note: StudentNote) => {
+    try {
+      await copyToClipboard(noteShareUrl(note.id))
+      setStatus('Direct note link copied')
+      say('Note link copied')
+    } catch {
+      setError('Could not copy the link. Copy it from the note row instead.')
     }
   }
 
@@ -2007,12 +2684,13 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     }
   }
 
-  const removeNote = async (noteId: string) => {
+  const removeNote = async (note: StudentNote) => {
     setError(null)
-    setDeletingId(noteId)
+    setDeletingId(note.id)
     try {
-      await deleteStudentNote(noteId)
-      setNotes((previous) => previous.filter((note) => note.id !== noteId))
+      // Storage object first (Storage API), metadata row second — never the other way round.
+      await deleteStudentNote(note)
+      setNotes((previous) => previous.filter((row) => row.id !== note.id))
       setStatus('Note removed from Student Hub')
       say('Note removed')
     } catch (e) {
@@ -2042,11 +2720,11 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     ask(
       {
         title: 'Delete this note?',
-        lines: [note.title, 'Students will no longer see this material in the Student Hub.'],
+        lines: [note.title, 'The file is removed from storage first, then the note row. Students will no longer see it.'],
         confirmLabel: 'Delete note',
         danger: true,
       },
-      () => { void removeNote(note.id) },
+      () => { void removeNote(note) },
     )
   }
 
@@ -2062,6 +2740,18 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     )
   }
 
+  const confirmRemoveMeeting = (meeting: LiveMeeting) => {
+    ask(
+      {
+        title: 'Delete this meeting?',
+        lines: [meetingTitle(meeting), `${meeting.batch_name} · ${formatWhen(meeting.scheduled_start)}`, 'Students will no longer see it in the Student Hub.'],
+        confirmLabel: 'Delete meeting',
+        danger: true,
+      },
+      () => { void removeMeeting(meeting.id) },
+    )
+  }
+
   if (loading) {
     return (
       <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="glass glass-deep mt-4 rounded-[32px] px-6 py-12 text-center">
@@ -2071,19 +2761,18 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     )
   }
 
-  const endsAt = meetingExpiresAt(duration)
-  const liveNow = isMeetingActive(meeting)
+  const liveCount = sortedMeetings.filter((meeting) => meetingState(meeting, now) === 'live').length
 
   return (
-    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-      <div className="flex items-end justify-between gap-3">
-        <div>
+    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-2">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[.14em] text-white/65"><GraduationCap size={13} /> {teacherName}</p>
           <h1 className="font-display text-[31px] font-semibold leading-[1.05] tracking-tight">Student Hub Manager</h1>
-          <p className="mt-1 text-[13px] text-white/65">Live class and study materials, organised by batch.</p>
+          <p className="mt-1 text-[13px] text-white/65">Schedule classes and share study materials, organised by batch.</p>
         </div>
-        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${isLive ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
-          {isLive ? <Radio size={22} /> : <WifiOff size={21} />}
+        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${liveCount ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
+          {liveCount ? <Radio size={22} /> : <WifiOff size={21} />}
         </div>
       </div>
 
@@ -2095,7 +2784,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       )}
 
       {/* Batch selector — everything below is tagged with this exact batch name. */}
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
+      <div className={card}>
         <label className="block">
           <span className={label}>Batch Name</span>
           <select aria-label="Batch Name" className={field} value={effectiveBatch} onChange={(e) => setSelectedBatch(e.target.value)}>
@@ -2103,96 +2792,181 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </select>
         </label>
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-white/55">
-          <Folder size={13} /> Live classes, folders and notes for <strong className="text-white/80">{effectiveBatch}</strong> only.
+          <Folder size={13} /> New meetings, folders and notes are tagged <strong className="text-white/80">{effectiveBatch}</strong>.
         </p>
       </div>
 
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
-        <div className="flex items-center gap-2">
-          <span className="lens grid h-10 w-10 place-items-center rounded-2xl"><Video size={19} /></span>
-          <div>
-            <h2 className="font-display text-[19px] font-semibold">Live Meeting Control</h2>
-            <p className="text-[12px] text-white/60">{isLive ? 'Live now · Student Hub can join' : 'Currently offline'}</p>
+      {/* ---------------------------------------------------------------- schedule a class */}
+      <div className={card}>
+        <div className={stack}>
+          <span className="lens grid h-10 w-10 place-items-center rounded-xl"><Video size={19} /></span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-[19px] font-semibold">{editingId ? 'Edit meeting' : 'Schedule a class'}</h2>
+            <p className="text-[12px] text-white/60">
+              {liveCount ? `${liveCount} live now` : 'One class at a time or many ahead of time — your call.'}
+            </p>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isLive}
-            aria-label="Live class status"
-            disabled={busy}
-            onClick={() => { void saveMeeting(!isLive) }}
-            className={`glass-btn relative z-10 ml-auto flex h-9 w-16 items-center rounded-full p-1 ring-1 ${isLive ? 'justify-end bg-present/20 ring-present/45' : 'justify-start bg-black/35 ring-white/15'}`}
-          >
-            <span className={`block h-7 w-7 rounded-full ${isLive ? 'bg-present' : 'bg-white/70'}`} />
-          </button>
         </div>
 
-        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); void saveMeeting(isLive) }}>
-          <label>
-            <span className={label}>Class topic / title</span>
-            <input className={field} value={topic} maxLength={140} placeholder="e.g. Physics — Gravitation" onChange={(e) => setTopic(e.target.value)} />
-          </label>
-          <label>
-            <span className={label}>Meeting URL</span>
-            <input className={field} value={meetingUrl} maxLength={2000} inputMode="url" placeholder="https://meet.google.com/…" onChange={(e) => setMeetingUrl(e.target.value)} />
+        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); void saveMeeting(scheduledIso) }}>
+          <label className="block min-w-0">
+            <span className={label}>Class title</span>
+            <input className={field} value={meetingFormTitle} maxLength={140} placeholder="e.g. Physics — Gravitation" onChange={(e) => setMeetingFormTitle(e.target.value)} />
           </label>
 
-          {/* Meeting Duration: quick presets + custom minutes. expires_at = now() + duration_minutes. */}
-          <div>
-            <span className={label}>Meeting Duration</span>
-            <div className="flex flex-wrap gap-2" aria-label="Meeting duration">
-              {MEETING_DURATION_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  aria-pressed={duration === preset}
-                  onClick={() => { setDuration(preset); setCustomDuration('') }}
-                  className={`${chip} ${duration === preset ? 'lens' : 'bg-white/8 text-white/70'}`}
-                >
-                  <Clock3 size={14} /> {preset} mins
-                </button>
-              ))}
-            </div>
-            <label className="mt-2 block">
-              <span className="sr-only">Custom duration in minutes</span>
+          <label className="block min-w-0">
+            <span className={label}>Meeting link</span>
+            <input className={field} value={meetingFormUrl} maxLength={2000} inputMode="url" placeholder="https://meet.google.com/…" onChange={(e) => setMeetingFormUrl(e.target.value)} />
+          </label>
+
+          {/* Proper native date + clock picker with a Start Now shortcut. */}
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block min-w-[220px] flex-1">
+              <span className={label}>Start date &amp; time</span>
               <input
+                type="datetime-local"
+                aria-label="Start date and time"
                 className={field}
-                type="number"
-                min={MIN_DURATION_MINUTES}
-                max={MAX_DURATION_MINUTES}
-                aria-label="Custom duration in minutes"
-                value={customDuration}
-                placeholder={`Custom minutes (${MIN_DURATION_MINUTES}–${MAX_DURATION_MINUTES})`}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setCustomDuration(value)
-                  if (value.trim()) setDuration(normaliseDuration(Number(value)))
-                }}
+                value={startLocal}
+                onChange={(e) => setStartLocal(e.target.value)}
               />
             </label>
-            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-white/50">
-              <Timer size={13} /> Duration: {duration} Mins · a new class ends at {formatWhen(endsAt)} (saved as duration_minutes + expires_at).
+            <button
+              type="button"
+              className={smallAction}
+              disabled={busy}
+              onClick={() => setStartLocal(toLocalInputValue(new Date()))}
+            >
+              <CalendarClock size={14} /> Start Now
+            </button>
+          </div>
+
+          {/* Duration: value + Minutes/Hours toggle. Hours are converted to minutes before saving. */}
+          <div>
+            <span className={label}>Duration</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                step={durationUnit === 'hours' ? '0.25' : '1'}
+                min={durationUnit === 'hours' ? 0.25 : MIN_DURATION_MINUTES}
+                max={durationUnit === 'hours' ? 8 : MAX_DURATION_MINUTES}
+                aria-label={`Duration in ${durationUnit}`}
+                className={`${field} w-28 flex-none`}
+                value={durationValue}
+                onChange={(e) => setDurationValue(e.target.value)}
+              />
+              <div className="inline-flex flex-wrap rounded-xl bg-black/35 p-1" role="group" aria-label="Duration unit">
+                {(['minutes', 'hours'] as const).map((unit) => (
+                  <button
+                    key={unit}
+                    type="button"
+                    aria-pressed={durationUnit === unit}
+                    onClick={() => setDurationUnit(unit)}
+                    className={`glass-btn inline-flex h-8 items-center rounded-lg px-3 text-[12px] font-semibold capitalize ${durationUnit === unit ? 'lens text-white' : 'text-white/60'}`}
+                  >
+                    {unit}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2" aria-label="Duration presets">
+                {MEETING_DURATION_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    aria-pressed={durationMinutes === preset && durationUnit === 'minutes'}
+                    onClick={() => { setDurationUnit('minutes'); setDurationValue(String(preset)) }}
+                    className={`${chip} ${durationMinutes === preset && durationUnit === 'minutes' ? 'lens' : 'bg-white/8 text-white/70'}`}
+                  >
+                    <Clock3 size={14} /> {preset}m
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-white/50">
+              <Timer size={13} /> Saves as {durationMinutes} minutes · shows as “{formatDurationLabel(durationMinutes)}”
+              {scheduledIso ? ` · ends ${formatWhen(new Date(new Date(scheduledIso).getTime() + durationMinutes * 60_000).toISOString())}` : ''}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button type="submit" disabled={busy} className={action}>
-              {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} Save class details
+              {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editingId ? 'Save changes' : 'Schedule class'}
             </button>
-            <span className="text-[12px] text-white/55">{meeting?.updated_at ? `Last saved ${formatWhen(meeting.updated_at)}` : 'Not saved yet'}</span>
+            <button type="button" disabled={busy} className={smallAction} onClick={() => { void startNow() }}>
+              <PlayCircle size={15} /> Go live now
+            </button>
+            {editingId && (
+              <button type="button" className={smallAction} onClick={resetMeetingForm}>
+                Cancel edit
+              </button>
+            )}
           </div>
-          {liveNow && meeting && (
-            <p className="flex items-center gap-1.5 text-[12px] text-present">
-              <Radio size={13} /> Live for {effectiveBatch} · {meeting.duration_minutes} Mins{meeting.expires_at ? ` · ends ${formatWhen(meeting.expires_at)}` : ''}
-            </p>
-          )}
         </form>
       </div>
 
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
-        <div className="flex items-start gap-3">
-          <span className="lens grid h-10 w-10 shrink-0 place-items-center rounded-2xl"><Copy size={18} /></span>
-          <div className="min-w-0">
+      {/* ---------------------------------------------------------------- scheduled & live list */}
+      <div className={card}>
+        <div className={stack}>
+          <span className="lens grid h-10 w-10 place-items-center rounded-xl"><CalendarClock size={19} /></span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-[19px] font-semibold">Scheduled &amp; live meetings</h2>
+            <p className="text-[12px] text-white/60">Every batch, newest schedule first.</p>
+          </div>
+          <span className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-white/65">{sortedMeetings.length}</span>
+        </div>
+
+        {sortedMeetings.length === 0 ? (
+          <div className="mt-4 rounded-2xl border border-dashed border-white/15 px-4 py-6 text-center text-[13px] text-white/55">
+            No meetings yet. Schedule one above or tap “Go live now”.
+          </div>
+        ) : (
+          <ul className="mt-4 space-y-2.5">
+            {sortedMeetings.map((meeting) => {
+              const stateNow = meetingState(meeting, now)
+              const when = relativeStart(meeting, now)
+              const rowKey = meeting.id || `${meeting.batch_name}-${meeting.scheduled_start}`
+              return (
+                <li key={rowKey} className="relative z-10 rounded-2xl border border-white/10 bg-black/25 p-3.5">
+                  <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${STATUS_STYLE[stateNow]}`}>{STATUS_LABEL[stateNow]}</span>
+                        <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-white/65">{meeting.batch_name || effectiveBatch}</span>
+                        <span className="text-[10px] text-white/45">{formatDurationLabel(meeting.duration_minutes)}</span>
+                      </div>
+                      <p className="mt-1.5 break-words text-[14px] font-semibold">{meetingTitle(meeting)}</p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-white/60">
+                        <span className="inline-flex items-center gap-1"><Clock3 size={12} /> {formatWhen(meeting.scheduled_start)}{formatClock(meeting.scheduled_start) ? ` · ${formatClock(meeting.scheduled_start)}` : ''}</span>
+                        {when && <span className="text-sky-200/80">starts {when}</span>}
+                        {stateNow === 'live' && meeting.expires_at && <span className="text-present">ends {formatWhen(meeting.expires_at)}</span>}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" className={smallAction} onClick={() => editMeeting(meeting)}>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingId === meeting.id}
+                        aria-label={`Delete ${meetingTitle(meeting)}`}
+                        onClick={() => confirmRemoveMeeting(meeting)}
+                        className="glass glass-btn relative z-10 grid h-9 w-9 place-items-center rounded-xl text-white/70 disabled:opacity-40"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className={card}>
+        <div className="flex flex-wrap items-start gap-3">
+          <span className="lens grid h-10 w-10 shrink-0 place-items-center rounded-xl"><Copy size={18} /></span>
+          <div className="min-w-0 flex-1">
             <h2 className="font-display text-[19px] font-semibold">Student Hub Link</h2>
             <p className="mt-0.5 text-[12px] text-white/65">Share this read-only page with your students.</p>
             <code className="mt-2 block truncate rounded-xl bg-black/30 px-3 py-2 text-[12px] text-white/80">{studentHubUrl()}</code>
@@ -2203,10 +2977,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         </button>
       </div>
 
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
-        <div className="flex items-center gap-2">
-          <span className="lens grid h-10 w-10 place-items-center rounded-2xl"><BookOpen size={19} /></span>
-          <div>
+      <div className={card}>
+        <div className={stack}>
+          <span className="lens grid h-10 w-10 place-items-center rounded-xl"><BookOpen size={19} /></span>
+          <div className="min-w-0">
             <h2 className="font-display text-[19px] font-semibold">Upload &amp; Manage Notes</h2>
             <p className="text-[12px] text-white/60">Files, PDFs, links, or quick text notes for {effectiveBatch}.</p>
           </div>
@@ -2214,7 +2988,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
         {/* Folders are always batch-tagged; notes inherit the same batch automatically. */}
         <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3.5">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-display text-[15px] font-semibold">Folders for {effectiveBatch}</h3>
             <span className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-white/65">{folders.length}</span>
           </div>
@@ -2256,7 +3030,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         <form className="mt-4 space-y-3" onSubmit={(e) => { void addNote(e) }}>
           <div>
             <span className={label}>Material type</span>
-            <div className="grid grid-cols-3 gap-1 rounded-full bg-black/35 p-1" aria-label="Material type">
+            <div className="grid grid-cols-3 gap-1 rounded-xl bg-black/35 p-1" aria-label="Material type">
               {([
                 ['file', 'File / PDF', FileText],
                 ['link', 'Link', Link2],
@@ -2267,7 +3041,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   type="button"
                   onClick={() => { setKind(id); setFile(null); setBody(''); if (fileInput.current) fileInput.current.value = '' }}
                   aria-pressed={kind === id}
-                  className={`glass-btn relative z-10 flex h-10 items-center justify-center gap-1.5 rounded-full px-2 text-[12px] font-semibold ${kind === id ? 'lens text-white' : 'text-white/65'}`}
+                  className={`glass-btn relative z-10 flex h-10 flex-wrap items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold ${kind === id ? 'lens text-white' : 'text-white/65'}`}
                 >
                   <Icon size={15} /> {text}
                 </button>
@@ -2276,17 +3050,17 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </div>
 
           <div className="grid gap-3 min-[420px]:grid-cols-2">
-            <label>
+            <label className="min-w-0">
               <span className={label}>Title</span>
               <input className={field} value={title} maxLength={160} placeholder="Chapter 4 — Gravitation" onChange={(e) => setTitle(e.target.value)} />
             </label>
-            <label>
+            <label className="min-w-0">
               <span className={label}>Subject tag</span>
               <input className={field} value={subject} maxLength={80} placeholder="Physics" onChange={(e) => setSubject(e.target.value)} />
             </label>
           </div>
 
-          <label>
+          <label className="block min-w-0">
             <span className={label}>Folder / group (optional)</span>
             <input className={field} list="hub-folder-options" aria-label="Folder / group" maxLength={120} value={folderName} placeholder="e.g. Unit 1 — Mechanics" onChange={(e) => setFolderName(e.target.value)} />
             <datalist id="hub-folder-options">
@@ -2296,26 +3070,26 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </label>
 
           {kind === 'file' && (
-            <label>
+            <label className="block min-w-0">
               <span className={label}>Choose a file or PDF</span>
               <input
                 ref={fileInput}
                 type="file"
                 aria-label="Choose a file or PDF"
-                className={`${field} file:mr-3 file:rounded-full file:border-0 file:bg-white/15 file:px-3 file:py-1.5 file:text-white`}
+                className={`${field} file:mr-3 file:rounded-lg file:border-0 file:bg-white/15 file:px-3 file:py-1.5 file:text-white`}
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
               <span className="mt-1 block text-[11px] text-white/45">Up to 15 MB. Stored in your private teacher folder in Supabase Storage.</span>
             </label>
           )}
           {kind === 'link' && (
-            <label>
+            <label className="block min-w-0">
               <span className={label}>Study link</span>
               <input className={field} value={body} maxLength={2000} inputMode="url" placeholder="https://…" onChange={(e) => setBody(e.target.value)} />
             </label>
           )}
           {kind === 'text' && (
-            <label>
+            <label className="block min-w-0">
               <span className={label}>Text note</span>
               <textarea className={`${field} min-h-28 resize-y`} value={body} maxLength={20000} placeholder="Key formulas, homework, or a quick reminder…" onChange={(e) => setBody(e.target.value)} />
             </label>
@@ -2327,7 +3101,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         </form>
 
         <div className="mt-5 border-t border-white/10 pt-4">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-display text-[17px] font-semibold">Previously uploaded</h3>
             <span className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-white/65">{notes.length}</span>
           </div>
@@ -2352,7 +3126,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                     const filePending = note.kind === 'file' && Boolean(note.file_path) && !href
                     return (
                       <article key={note.id} className="glass no-blur rounded-2xl p-3.5">
-                        <div className="relative z-10 flex items-start gap-2">
+                        <div className="relative z-10 flex flex-wrap items-start gap-2">
                           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/8 text-white/75">
                             {note.kind === 'file' ? <FileText size={17} /> : note.kind === 'link' ? <Link2 size={17} /> : <BookOpen size={17} />}
                           </span>
@@ -2377,25 +3151,26 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                             disabled={deletingId === note.id}
                             onClick={() => confirmRemove(note)}
                             aria-label={`Delete ${note.title}`}
-                            className="glass glass-btn relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/70 disabled:opacity-40"
+                            className="glass glass-btn relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white/70 disabled:opacity-40"
                           >
                             <Trash2 size={16} />
                           </button>
                         </div>
-                        {(href || downloadHref) && (
-                          <div className="relative z-10 mt-3 flex flex-wrap gap-2">
-                            {href && (
-                              <a href={href} target="_blank" rel="noopener noreferrer" className="glass-btn inline-flex h-9 items-center gap-1.5 rounded-full bg-white/8 px-3 text-[12px] font-semibold">
-                                <ExternalLink size={14} /> Open
-                              </a>
-                            )}
-                            {downloadHref && (
-                              <a href={downloadHref} download={note.file_name ?? undefined} className="glass-btn inline-flex h-9 items-center gap-1.5 rounded-full bg-white/8 px-3 text-[12px] font-semibold">
-                                <Upload size={14} className="rotate-180" /> Download
-                              </a>
-                            )}
-                          </div>
-                        )}
+                        <div className="relative z-10 mt-3 flex flex-wrap gap-2">
+                          {href && (
+                            <a href={href} target="_blank" rel="noopener noreferrer" className={smallAction}>
+                              <ExternalLink size={14} /> Open
+                            </a>
+                          )}
+                          {downloadHref && (
+                            <a href={downloadHref} download={note.file_name ?? undefined} className={smallAction}>
+                              <Upload size={14} className="rotate-180" /> Download
+                            </a>
+                          )}
+                          <button type="button" className={smallAction} onClick={() => { void copyNoteLink(note) }}>
+                            <Link2 size={14} /> Copy link
+                          </button>
+                        </div>
                       </article>
                     )
                   })}
@@ -2404,19 +3179,28 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             </div>
           )}
         </div>
+
+        <p className="mt-4 flex flex-wrap items-center gap-1.5 text-[11px] text-white/40">
+          <Users size={12} /> Students open notes at <code className="rounded bg-black/30 px-1.5 py-0.5">{`${studentHubUrl()}?note=<id>`}</code>
+        </p>
       </div>
     </motion.section>
   )
 }
 ```
 
-The component uses `textContent`/React text nodes throughout; no user value reaches `innerHTML`. Meeting duration has `30 / 45 / 60 mins` quick buttons plus a custom minute input. `meetingExpiresAt()` computes `expires_at = now() + duration_minutes`, and `set_my_batch_meeting` revalidates it server-side. Every folder and note is tagged with the selected batch, and file actions use `signedNoteUrl()` because the bucket is private.
+### `src/lib/auth.ts` — purge Storage before the account row is wiped
+
+```ts
+export async function deleteAccount(teacherId: string): Promise<void> {
+  // Storage objects must go through the Storage API — a SQL delete of storage.objects is refused.
+  await purgeMyNoteFiles(teacherId)
+  const { error } = await sb().rpc('delete_me')
+```
 
 ---
 
-## 3) Student App (`student-hub/index.html` / JS updates)
-
-Keep every asset relative. The HTML below uses `<script type="module" src="./portal.js">` so `portal.js` can import `sanitize.js`; the local UMD Supabase client is loaded first and the CSP remains `script-src 'self'` with no inline scripts. The top bar is a `<header>`, not a `<nav>`, and the Teacher App nav tests remain unchanged.
+## 3) Student Hub (`student-hub/index.html` / JS & CSS fixes)
 
 ### `student-hub/index.html`
 
@@ -2625,6 +3409,34 @@ export function formatDuration(minutes) {
   return `${n} Mins`
 }
 
+/** "45 Mins" / "1 Hr 30 Mins" / "2 Hrs" — student-facing duration label. */
+export function formatDurationLabel(minutes) {
+  const n = Math.max(1, Math.min(480, Math.round(Number(minutes) || 45)))
+  const hours = Math.floor(n / 60)
+  const rest = n % 60
+  if (!hours) return `${rest} Mins`
+  if (!rest) return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'}`
+  return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'} ${rest} Mins`
+}
+
+/** Local clock time, e.g. "6:30 pm". */
+export function formatClock(iso) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+/** "Starts in 12 min" / "Starts in 2 hr 5 min" — empty once the class has begun. */
+export function formatStartsIn(ms) {
+  const total = Math.max(0, Math.ceil(Number(ms) / 60000))
+  if (!total) return ''
+  if (total < 60) return `Starts in ${total} min`
+  const hours = Math.floor(total / 60)
+  if (hours < 24) return `Starts in ${hours} hr${total % 60 ? ` ${total % 60} min` : ''}`
+  const days = Math.floor(hours / 24)
+  return `Starts in ${days} day${days === 1 ? '' : 's'}`
+}
+
 /** Remaining time as mm:ss (or h:mm:ss). */
 export function formatRemaining(ms) {
   const total = Math.max(0, Math.ceil(Number(ms) / 1000 || 0))
@@ -2648,12 +3460,15 @@ export function initials(name) {
    The Teacher App owns every write. This page uses an anonymous Supabase client, SELECTs and one
    read-only snapshot RPC. It never calls INSERT/UPDATE/DELETE/RPC-write and only ever uses the
    public anon key — no privileged key is present in this static bundle.
-   Sections: 1) config + local profile  2) onboarding + teacher switcher  3) live class card
-             4) notes/folders  5) data loading + realtime/polling. */
+   Sections: 1) config + local profile  2) onboarding + teacher switcher  3) live + scheduled
+             classes  4) notes/folders (+ ?note= deep links)  5) data loading + realtime/polling. */
 
 'use strict'
 
-import { cleanBody, cleanLine, escapeHtml, formatDuration, formatRemaining, initials, safeHttpUrl } from './sanitize.js'
+import {
+  cleanBody, cleanLine, escapeHtml, formatClock, formatDurationLabel, formatRemaining,
+  formatStartsIn, initials, safeHttpUrl,
+} from './sanitize.js'
 
 const CONFIG_URL = './config.json'
 const STORAGE_BUCKET = 'student_notes'
@@ -2702,6 +3517,8 @@ const state = {
   batches: [],
   teachers: [],
   meeting: null,
+  meetings: [],
+  deepLinkNote: '',
   folders: [],
   notes: [],
   query: '',
@@ -2974,6 +3791,7 @@ function changeProfile() {
   state.teacherId = ''
   state.teachers = []
   state.meeting = null
+  state.meetings = []
   state.folders = []
   state.notes = []
   state.loadedOnce = false
@@ -2984,17 +3802,41 @@ function changeProfile() {
 }
 
 /* --------------------------------------------------------------------------------------------
-   3. Live class card: duration badge, remaining time, automatic end at expires_at
+   3. Live + scheduled classes: one card per meeting, never more than the teacher scheduled
    -------------------------------------------------------------------------------------------- */
-function activeMeeting() {
-  const row = state.meeting
-  if (!row || row.is_live !== true) return null
-  const href = safeHttpUrl(row.meeting_url || row.meeting_link)
-  if (!href) return null
+/** Effective state from the clock — the same rule the database applies. */
+function meetingState(row, now = Date.now()) {
+  if (!row) return 'ended'
+  if (cleanLine(row.status, 20) === 'ended') return 'ended'
+  const start = Date.parse(row.scheduled_start || row.created_at || '')
   const expiry = Date.parse(row.expires_at || '')
-  if (!Number.isFinite(expiry)) return { row, href, expiry: 0 }
-  if (expiry <= Date.now()) return null
-  return { row, href, expiry }
+  if (Number.isFinite(start) && start > now) return 'scheduled'
+  if (Number.isFinite(expiry) && expiry > now) return 'live'
+  return Number.isFinite(start) ? 'ended' : 'scheduled'
+}
+
+function visibleMeetings(now = Date.now()) {
+  const seen = new Set()
+  return state.meetings
+    .filter((row) => {
+      if (!row || typeof row !== 'object') return false
+      // Defence in depth: never render another batch's or teacher's row.
+      if (cleanLine(row.batch_name, 80) !== state.batch) return false
+      if (cleanLine(row.teacher_id, 64) !== state.teacherId) return false
+      if (seen.has(row.id)) return false
+      seen.add(row.id)
+      return meetingState(row, now) !== 'ended'
+    })
+    .sort((a, b) => {
+      const aLive = meetingState(a, now) === 'live' ? 0 : 1
+      const bLive = meetingState(b, now) === 'live' ? 0 : 1
+      if (aLive !== bLive) return aLive - bLive
+      return String(a.scheduled_start || '').localeCompare(String(b.scheduled_start || ''))
+    })
+}
+
+function meetingHeading(row) {
+  return cleanLine(row.meeting_title || row.topic, 140) || 'Live class'
 }
 
 function updateRemaining(expiry) {
@@ -3002,63 +3844,111 @@ function updateRemaining(expiry) {
   if (!remaining) return
   const ms = expiry > 0 ? expiry - Date.now() : 0
   if (expiry > 0 && ms <= 0) {
-    // Meeting duration is over: hide Join Now, mark it ended and refresh from Supabase.
-    renderLive()
+    // The duration is over: refresh so the card disappears instead of offering a dead join link.
     void loadAll()
     return
   }
-  remaining.textContent = expiry > 0 ? `Ends in ${formatRemaining(ms)}` : 'Live now'
+  remaining.textContent = expiry > 0 ? `Ends in ${formatRemaining(ms)}` : ''
 }
 
-function renderLive() {
-  const active = activeMeeting()
-  const ended = Boolean(state.meeting && state.meeting.is_live === true && !active)
-  setSyncLabel(active ? 'Live now' : ended ? 'Class ended' : 'Up to date', Boolean(active))
-  els.liveContent.replaceChildren()
+/** Schedules re-render every 30s so a scheduled class flips to live by itself. */
+function tickSchedules() {
+  const now = Date.now()
+  visibleMeetings(now).forEach((row) => {
+    if (meetingState(row, now) !== 'live' || !row.expires_at) return
+    const expiry = Date.parse(row.expires_at)
+    if (Number.isFinite(expiry)) updateRemaining(expiry)
+  })
+}
 
-  if (!active) {
-    const offline = elem('div', 'offline-state')
-    offline.append(
-      elem('strong', '', ended ? 'This class has ended' : 'No live class right now'),
-      elem('span', '', ended
-        ? 'The meeting duration is over. Your teacher will start a new class when ready.'
-        : 'Your teacher will switch on the live badge when class begins.'),
-    )
-    els.liveContent.append(offline)
-    return
-  }
+function meetingCard(row) {
+  const now = Date.now()
+  const stateNow = meetingState(row, now)
+  const live = stateNow === 'live'
+  const href = safeHttpUrl(row.meeting_url || row.meeting_link)
 
-  const { row, href, expiry } = active
-  const session = elem('div', 'live-session')
+  const article = elem('article', `live-session meeting-card ${live ? 'is-live' : 'is-scheduled'}`)
   const main = elem('div', 'live-session-main')
-  const badge = elem('div', 'live-badge')
-  const dot = elem('span', 'live-dot')
-  dot.setAttribute('aria-hidden', 'true')
-  badge.append(dot, document.createTextNode('Live now'))
+
   const badges = elem('div', 'live-badges')
-  badges.append(elem('span', 'duration-badge', `Duration: ${formatDuration(row.duration_minutes)}`))
-  const remaining = elem('span', 'remaining-badge', '')
-  remaining.id = 'remaining-time'
-  badges.append(remaining)
-  const topic = cleanLine(row.topic, 140) || 'Live class'
-  main.append(badge, elem('div', 'live-topic', topic), badges)
+  if (live) {
+    const badge = elem('div', 'live-badge')
+    const dot = elem('span', 'live-dot')
+    dot.setAttribute('aria-hidden', 'true')
+    badge.append(dot, document.createTextNode('LIVE NOW'))
+    badges.append(badge)
+  } else {
+    badges.append(elem('span', 'schedule-badge', 'SCHEDULED'))
+  }
+  badges.append(elem('span', 'duration-badge', `Duration: ${formatDurationLabel(row.duration_minutes)}`))
+  if (live) {
+    const remaining = elem('span', 'remaining-badge', '')
+    remaining.id = 'remaining-time'
+    badges.append(remaining)
+  }
+  main.append(badges, elem('div', 'live-topic', meetingHeading(row)))
 
   const meta = []
   meta.push(cleanLine(row.teacher_name, 120) || teacherNameFor(state.teacherId))
   const batch = cleanLine(row.batch_name, 80)
   if (batch) meta.push(`Batch: ${batch}`)
-  const when = formatDate(row.updated_at)
-  if (when) meta.push(`Started ${when}`)
+  const startClock = formatClock(row.scheduled_start)
+  if (startClock) meta.push(`${live ? 'Started' : 'Starts'} ${startClock}`)
+  if (!live) {
+    const startsIn = formatStartsIn(Date.parse(row.scheduled_start || '') - now)
+    if (startsIn) meta.push(startsIn)
+  }
+  if (live && row.expires_at) meta.push(`Ends ${formatClock(row.expires_at)}`)
   main.append(elem('div', 'live-meta', meta.join(' · ')))
 
-  const join = elem('a', 'join-btn', 'Join Now ↗')
-  join.href = href
-  join.target = '_blank'
-  join.rel = 'noopener noreferrer'
-  join.setAttribute('aria-label', `Join ${topic}`)
-  session.append(main, join)
-  els.liveContent.append(session)
-  updateRemaining(expiry)
+  article.append(main)
+
+  if (!href) {
+    article.append(elem('span', 'join-btn is-disabled', live ? 'Link coming soon' : 'Link on the way'))
+  } else if (live) {
+    const join = elem('a', 'join-btn', 'Join Now ↗')
+    join.href = href
+    join.target = '_blank'
+    join.rel = 'noopener noreferrer'
+    join.setAttribute('aria-label', `Join ${meetingHeading(row)}`)
+    article.append(join)
+  } else {
+    // Scheduled: the link is visible but inactive until the start time arrives.
+    const disabled = elem('span', 'join-btn is-disabled', 'Opens at start time')
+    disabled.setAttribute('aria-disabled', 'true')
+    article.append(disabled)
+  }
+  return article
+}
+
+function renderLive() {
+  const rows = visibleMeetings()
+  const liveRows = rows.filter((row) => meetingState(row) === 'live')
+  setSyncLabel(liveRows.length ? 'Live now' : 'Up to date', liveRows.length > 0)
+  els.liveContent.replaceChildren()
+
+  const heading = elem('div', 'meetings-head')
+  heading.append(
+    elem('span', 'meetings-head-title', liveRows.length
+      ? `${liveRows.length} class${liveRows.length === 1 ? '' : 'es'} live now`
+      : 'Your classes'),
+    elem('span', 'meetings-head-count', rows.length
+      ? `${rows.length} upcoming or live`
+      : 'Nothing scheduled'),
+  )
+  els.liveContent.append(heading)
+
+  if (!rows.length) {
+    const offline = elem('div', 'offline-state')
+    offline.append(
+      elem('strong', '', 'No scheduled classes right now'),
+      elem('span', '', 'Your teacher will schedule the next class soon. Notes are still below.'),
+    )
+    els.liveContent.append(offline)
+    return
+  }
+
+  rows.forEach((row) => els.liveContent.append(meetingCard(row)))
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -3124,6 +4014,21 @@ function copyButton(label, value) {
   return button
 }
 
+/** Direct, shareable link to one note: .../student-hub/?note=<note_id> */
+function noteShareUrl(noteId) {
+  const id = cleanLine(noteId, 64)
+  if (!id) return location.href
+  return `${location.origin}${location.pathname}?note=${encodeURIComponent(id)}`
+}
+
+function scrollToDeepLink() {
+  if (!state.deepLinkNote) return
+  const target = document.querySelector('.note-card.is-target')
+  if (!target) return
+  try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch { /* older browsers */ }
+  target.classList.add('is-flash')
+}
+
 function kindLabel(kind) {
   if (kind === 'file') return 'File / PDF'
   if (kind === 'link') return 'Link'
@@ -3133,6 +4038,11 @@ function kindLabel(kind) {
 
 function noteCard(note) {
   const card = elem('article', 'note-card')
+  const noteKey = cleanLine(note.id, 64)
+  if (noteKey && noteKey === state.deepLinkNote) {
+    card.classList.add('is-target')
+    card.setAttribute('tabindex', '-1')
+  }
   const top = elem('div', 'note-top')
   top.append(
     elem('span', 'subject-pill', cleanLine(note.subject, 80) || 'General'),
@@ -3150,7 +4060,7 @@ function noteCard(note) {
     const name = cleanLine(note.file_name, 255) || 'Study material'
     const size = formatBytes(note.file_size)
     card.append(elem('p', 'note-detail', `${name}${size ? ` · ${size}` : ''}${cleanLine(note.mime_type, 160) ? ` · ${cleanLine(note.mime_type, 160)}` : ''}`))
-    const path = cleanLine(note.file_path, 500)
+    const path = cleanLine(note.storage_path || note.file_path, 500)
     if (path) {
       actions.append(fileAction('Open', path, name, false, true), fileAction('Download', path, name, true))
     } else {
@@ -3174,11 +4084,21 @@ function noteCard(note) {
     download.addEventListener('click', () => window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1500), { once: true })
     actions.append(download, copyButton('Copy note', body))
   }
+  // Every note can be shared as a direct link to this student hub, even without a file.
+  actions.append(copyButton('Copy share link', noteShareUrl(note.id)))
   card.append(actions)
   return card
 }
 
 function renderNotes() {
+  // A direct ?note= link must never be hidden by a stale filter from this device.
+  if (state.deepLinkNote && state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+    state.query = ''
+    state.subject = 'all'
+    state.kind = 'all'
+    els.search.value = ''
+    els.kindFilter.value = 'all'
+  }
   const seen = new Set(['all'])
   state.notes.forEach((note) => seen.add(cleanLine(note.subject, 80) || 'General'))
   const subjects = ['all', ...[...seen].filter((subject) => subject !== 'all').sort((a, b) => a.localeCompare(b))]
@@ -3245,6 +4165,7 @@ function renderNotes() {
     group.append(head, wrap)
     els.notesList.append(group)
   })
+  scrollToDeepLink()
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -3296,11 +4217,11 @@ async function readDirect() {
   const legacyFields = 'id,teacher_id,teacher_name,batch_name,title,subject,kind,body,file_path,file_name,mime_type,file_size,folder_id,created_at'
   const [live, folders, notes] = await Promise.all([
     scoped(client.from('live_meetings'))
-      .select('teacher_id,teacher_name,batch_name,topic,meeting_url,is_live,duration_minutes,expires_at,created_at,updated_at')
+      .select('id,teacher_id,teacher_name,batch_name,meeting_title,topic,meeting_url,meeting_link,status,scheduled_start,duration_minutes,expires_at,created_at,updated_at')
       .eq('batch_name', state.batch)
       .eq('teacher_id', state.teacherId)
-      .eq('is_live', true)
-      .limit(1),
+      .order('scheduled_start', { ascending: true })
+      .limit(20),
     scoped(client.from('folders'))
       .select('id,batch_name,name,created_at')
       .eq('batch_name', state.batch)
@@ -3325,7 +4246,7 @@ async function readDirect() {
   const failure = live.error || folders.error || noteRows.error
   if (failure) throw failure
   return {
-    meeting: Array.isArray(live.data) ? live.data[0] ?? null : null,
+    meetings: Array.isArray(live.data) ? live.data : [],
     folders: Array.isArray(folders.data) ? folders.data : [],
     notes: Array.isArray(noteRows.data) ? noteRows.data : [],
   }
@@ -3347,7 +4268,19 @@ async function loadAll() {
     } catch { /* older project: use the direct filtered SELECTs below */ }
     if (!payload) payload = await readDirect()
 
-    state.meeting = payload.meeting && typeof payload.meeting === 'object' ? payload.meeting : null
+    const meetingRows = Array.isArray(payload.meetings)
+      ? payload.meetings
+      : payload.meeting && typeof payload.meeting === 'object'
+        ? [payload.meeting]
+        : []
+    // Defence in depth: only rows for this exact batch + teacher are rendered.
+    state.meetings = meetingRows.filter((row) =>
+      row && typeof row === 'object'
+      && cleanLine(row.batch_name, 80) === state.batch
+      && cleanLine(row.teacher_id, 64) === state.teacherId
+      && meetingState(row) !== 'ended',
+    )
+    state.meeting = state.meetings.find((row) => meetingState(row) === 'live') ?? null
     state.folders = Array.isArray(payload.folders) ? payload.folders : []
     // Defence in depth: never render a row that is not for this exact batch + teacher.
     state.notes = (Array.isArray(payload.notes) ? payload.notes : []).filter((note) =>
@@ -3422,6 +4355,12 @@ async function start() {
   bindControls()
   subscribe()
 
+  // Direct share link: .../student-hub/?note=<note_id>. Kept until the batch/teacher is known.
+  try {
+    const params = new URLSearchParams(location.search)
+    state.deepLinkNote = cleanLine(params.get('note'), 64)
+  } catch { /* no query string support */ }
+
   try {
     await loadDirectory()
   } catch (error) {
@@ -3441,12 +4380,14 @@ async function start() {
     renderTeacherPicker()
   } else {
     await loadAll()
+    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+      showToast('That note is not available for your batch and teacher.')
+    }
   }
 
   window.setInterval(() => { if (!document.hidden) void loadAll() }, POLL_MS)
   window.setInterval(() => {
-    const active = activeMeeting()
-    if (active) updateRemaining(active.expiry)
+    if (!document.hidden) tickSchedules()
   }, 1000)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) void loadAll() })
   globalThis.addEventListener('pagehide', () => {
@@ -4040,6 +4981,104 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   .orb, .live-dot, .spinner { animation: none; }
   .join-btn, .action-btn, .retry-btn, .toast, .teacher-card { transition: none; }
 }
+
+/* ------------------------------------------------------------------------------------------------
+   v3 — multiple meetings, schedule badges, direct note links and border-safe action rows.
+   Every button group wraps instead of overflowing, and nothing touches a card edge.
+   ------------------------------------------------------------------------------------------------ */
+.meetings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+}
+.meetings-head-title { font-family: var(--font-display); font-size: 15px; font-weight: 600; }
+.meetings-head-count { color: var(--faint); font-size: 12px; }
+
+.meeting-card { align-items: flex-start; }
+.meeting-card.is-scheduled {
+  border-color: rgba(255,255,255,.14);
+  background: linear-gradient(135deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+.meeting-card .live-session-main { min-width: 0; }
+.meeting-card .live-topics { overflow-wrap: anywhere; }
+
+.live-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.live-badges .live-badge { margin-bottom: 0; }
+.schedule-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.07);
+  color: #dfe9ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.duration-badge, .remaining-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.28);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.remaining-badge { color: var(--present); border-color: rgba(94,242,176,.28); }
+
+.join-btn.is-disabled {
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px dashed rgba(255,255,255,.20);
+  background: rgba(255,255,255,.04);
+  color: var(--faint);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: default;
+  box-shadow: none;
+}
+.join-btn.is-disabled:hover { border-color: rgba(255,255,255,.20); background: rgba(255,255,255,.04); }
+
+.note-card { border-radius: 12px; }
+.note-card.is-target {
+  border-color: rgba(94,242,176,.55);
+  box-shadow: 0 0 0 1px rgba(94,242,176,.28), 0 12px 30px -18px rgba(94,242,176,.5);
+}
+.note-card.is-flash { animation: note-flash 1.6s ease-out 1; }
+@keyframes note-flash {
+  0% { background-color: rgba(94,242,176,.16); }
+  100% { background-color: transparent; }
+}
+
+.note-actions, .live-badges, .note-top, .folder-head, .toolbar, .topbar-inner, .onboarding-card form {
+  row-gap: 10px;
+  column-gap: 8px;
+}
+.note-actions > * { flex: 0 1 auto; }
+.action-btn, .join-btn, .retry-btn { max-width: 100%; }
+.note-card, .folder-group, .live-session, .glass { overflow-wrap: anywhere; }
+
+.glass, .live-card, .materials, .folder-group, .note-card, .toolbar, .onboarding-card { padding: clamp(14px, 2.4vw, 22px); }
+.live-content { display: grid; gap: 12px; }
+.empty-card { padding: 22px; }
+
+@media (max-width: 640px) {
+  .meeting-card { flex-direction: column; align-items: stretch; }
+  .meeting-card .join-btn, .meeting-card .join-btn.is-disabled { width: 100%; }
+  .note-actions { gap: 8px; }
+  .note-actions .action-btn { flex: 1 1 auto; }
+}
 ```
 
 ### `student-hub/config.json` (public values only)
@@ -4051,35 +5090,12 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 }
 ```
 
-The checked-in `student-hub/config.json` contains the real public URL/anon key for this project; `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` override it for other deployments. `student-hub/vendor/supabase.js` is the local UMD client, and `student-hub/vendor/LICENSE` is its MIT license.
-
 ---
 
-## 4) Apply / verify
+## 4) Verified state
 
-```bash
-npm ci --no-audit --no-fund
-npm test -- --reporter=dot
-npm run lint
-npm run build
-npm run preview -- --host 0.0.0.0 --port 4173
-# Preview: / and /student-hub/ (relative assets, config.json, vendor/supabase.js, portal.js, sanitize.js)
-```
-
-`vite.config.ts` copies all `student-hub/` files into `dist/student-hub/`. `vercel.json` rewrites `/student-hub` to `/student-hub/index.html` and excludes the static portal from the SPA fallback. `public/sw.js` is `coachsathi-v20` and deliberately bypasses `/student-hub/`. The service worker cache was bumped so old clients do not serve stale portal JS.
-
-On first visit the portal asks for Full Name + Batch, saves `student_name`, `selected_batch` and `selected_teacher_id` in `localStorage`, shows only teachers from that batch, and skips onboarding on later visits. The top-bar **Switch Teacher** pill changes teacher IDs in one click; **Change** clears the three keys and re-runs setup. The live card shows `Duration: 45 Mins`, a live countdown, and hides Join Now once `expires_at` passes. Notes are grouped by folder and each group is labelled with the batch.
-
----
-
-## 5) Verified state
-
-Verified on active branch `arena/40458003-coaching-sathi` after all changes:
-
-- `npm test -- --reporter=dot` — **24 files / 341 tests passed**.
-- `npm run lint` — **0 errors**, 26 pre-existing React Compiler advisories/warnings.
-- `npm run build` — OK; `dist/student-hub/` contains `config.json`, `index.html`, `portal.js`, `sanitize.js`, `styles.css` and `vendor/`.
-- `git diff --check`, ESM syntax checks for `portal.js` / `sanitize.js`, `node --check public/sw.js`, and JSON parsing for `config.json` / `vercel.json` — OK.
-- Vite preview on `0.0.0.0:4173` returned HTTP 200 for `/`, `/student-hub/`, `/student-hub/config.json`, `/student-hub/vendor/supabase.js`, `/student-hub/portal.js` and `/student-hub/sanitize.js`.
-- Live Supabase project `urbywuwtcjarwmjsfmem` has the five Student Hub v2 migrations applied. Anon reads with no scope headers return zero content rows; the minimal directory remains readable; matching headers return the scoped rows and the guarded snapshot succeeds; no-scope snapshot call raises `42501`. The `student_notes` bucket is private.
-- No commit, push, PR, merge, Vercel deploy or GitHub Pages configuration was performed for this active task. The live preview server is local to this workspace.
+- `npm test` — 24 files / 344 tests passed.
+- `npm run lint` — 0 errors (26 pre-existing React Compiler advisories).
+- `npm run build` — OK; `dist/student-hub/` holds `config.json`, `index.html`, `portal.js`, `sanitize.js`, `styles.css`, `vendor/`.
+- Live Supabase: the v3 pair is applied (`20261122182327`, `20261122182349`); a rolled-back probe confirmed a teacher can create a live and a future meeting and that anon reads both only with matching scope headers.
+- UI polish: every button group wraps (`flex-wrap`, `gap`), cards use 1–1.5rem padding with `box-sizing: border-box`, 12px card / 8px control radii and focus-visible rings, so buttons never overflow their card or touch its border on any viewport.

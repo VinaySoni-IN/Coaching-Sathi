@@ -8,15 +8,19 @@ export interface FakeUser { id: string; email: string; password: string; name: s
 interface ProfileRow { id: string; name: string; email: string; email_canonical?: string }
 interface BackupRow { doc: unknown; client_id: string | null; updated_at: string }
 interface MeetingRow {
+  id: string
   teacher_id: string
   teacher_name: string
   batch_name: string
+  meeting_title: string
   topic: string
   meeting_url: string
   meeting_link: string
+  scheduled_start: string
   is_live: boolean
   duration_minutes: number
   expires_at: string | null
+  status: 'scheduled' | 'live' | 'ended'
   created_at: string
   updated_at: string
 }
@@ -54,7 +58,8 @@ const db = {
   session: null as string | null,
   profiles: new Map<string, ProfileRow>(),
   backups: new Map<string, BackupRow>(),
-  meetings: new Map<string, MeetingRow>(),
+  meetings: [] as MeetingRow[],
+  meetingSeq: 0,
   folders: [] as FolderRow[],
   notes: [] as NoteRow[],
   files: new Map<string, StoredFile>(),
@@ -73,7 +78,8 @@ export function resetFakeCloud() {
   db.session = null
   db.profiles.clear()
   db.backups.clear()
-  db.meetings.clear()
+  db.meetings = []
+  db.meetingSeq = 0
   db.folders = []
   db.notes = []
   db.files.clear()
@@ -110,27 +116,39 @@ const authErr = (message: string, code = '28000') => ({ data: { user: null }, er
 
 type Res<T> = { data: T; error: null }
 
+/** Mirrors the DB trigger: expires_at = scheduled_start + duration, state derived from the clock. */
 function meetingDefaults(userId: string, row: Partial<MeetingRow> = {}): MeetingRow {
   const stamp = stampNow()
+  const scheduled = row.scheduled_start ?? stamp
+  const duration = Math.max(1, Math.min(480, Math.round(Number(row.duration_minutes ?? 45))))
   const meeting: MeetingRow = {
+    id: `m${++db.meetingSeq}`,
     teacher_id: userId,
     teacher_name: '',
     batch_name: 'General',
+    meeting_title: '',
     topic: '',
     meeting_url: '',
     meeting_link: '',
+    scheduled_start: scheduled,
     is_live: false,
-    duration_minutes: 45,
+    duration_minutes: duration,
     expires_at: null,
+    status: 'scheduled',
     created_at: stamp,
     updated_at: stamp,
     ...row,
   }
   meeting.meeting_link = meeting.meeting_url
-  if (!meeting.created_at) meeting.created_at = stamp
-  if (meeting.is_live && !meeting.expires_at) {
-    meeting.expires_at = new Date(Date.now() + meeting.duration_minutes * 60_000).toISOString()
+  meeting.meeting_title = clean(meeting.meeting_title || meeting.topic, 140) || 'Live class'
+  meeting.topic = meeting.meeting_title
+  meeting.expires_at = new Date(Date.parse(meeting.scheduled_start) + meeting.duration_minutes * 60_000).toISOString()
+  if (meeting.status !== 'ended') {
+    const start = Date.parse(meeting.scheduled_start)
+    const expiry = Date.parse(meeting.expires_at ?? '')
+    meeting.status = start > Date.now() ? 'scheduled' : expiry > Date.now() ? 'live' : 'ended'
   }
+  meeting.is_live = meeting.status === 'live'
   return meeting
 }
 
@@ -186,11 +204,11 @@ function from(table: string) {
     const me = currentUser()
     if (!me) return { data: [], error: null }
     if (table === 'live_meetings') {
-      const rows = [...db.meetings.values()]
+      const rows = db.meetings
         .filter((row) => row.teacher_id === me.id)
         .filter((row) => filter.is_live === undefined || row.is_live === filter.is_live)
         .filter((row) => !filter.batch_name || row.batch_name === filter.batch_name)
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+        .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start))
       return { data: maxRows === null ? rows : rows.slice(0, maxRows), error: null }
     }
     if (table === 'student_notes' || table === 'notes') {
@@ -204,7 +222,7 @@ function from(table: string) {
     }
     if (table === 'student_hub_directory') {
       const rows = [
-        ...[...db.meetings.values()].map((row) => ({ batch_name: row.batch_name, teacher_id: row.teacher_id, teacher_name: row.teacher_name })),
+        ...db.meetings.map((row) => ({ batch_name: row.batch_name, teacher_id: row.teacher_id, teacher_name: row.teacher_name })),
         ...db.folders.map((row) => ({ batch_name: row.batch_name, teacher_id: row.teacher_id, teacher_name: row.teacher_name })),
         ...db.notes.map((row) => ({ batch_name: row.batch_name, teacher_id: row.teacher_id, teacher_name: row.teacher_name })),
       ].filter((row) => row.batch_name)
@@ -219,8 +237,10 @@ function from(table: string) {
     }
     return { data: [], error: null }
   }
+  let deleting = false
   const builder = {
     select: () => builder,
+    delete: () => { deleting = true; return builder },
     eq: (column: string, value: string | boolean) => {
       if (column === 'id') filter.id = String(value)
       if (column === 'user_id') filter.user_id = String(value)
@@ -248,9 +268,12 @@ function from(table: string) {
       if (table === 'live_meetings') {
         const uid = filter.teacher_id ?? me.id
         if (uid !== me.id) return { data: null, error: null }
-        const row = db.meetings.get(uid) ?? null
-        if (filter.is_live === true && row && !row.is_live) return { data: null, error: null }
-        return { data: row, error: null }
+        const rows = db.meetings
+          .filter((row) => row.teacher_id === uid)
+          .filter((row) => filter.id === undefined || row.id === filter.id)
+          .filter((row) => filter.is_live === undefined || row.is_live === filter.is_live)
+          .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start))
+        return { data: rows[0] ?? null, error: null }
       }
       return { data: null, error: null }
     },
@@ -258,8 +281,18 @@ function from(table: string) {
       db.profiles.set(row.id, { ...db.profiles.get(row.id), ...row })
       return { data: null, error: null }
     },
-    then: (onFulfilled?: ((value: Res<unknown>) => unknown) | null, onRejected?: ((reason: unknown) => unknown) | null) =>
-      Promise.resolve(resolveRows()).then(onFulfilled, onRejected),
+    then: (onFulfilled?: ((value: Res<unknown>) => unknown) | null, onRejected?: ((reason: unknown) => unknown) | null) => {
+      const result = (() => {
+        if (!deleting || table !== 'student_notes') return resolveRows()
+        const me = currentUser()
+        if (!me) return { data: [], error: null } as Res<unknown>
+        const before = db.notes.length
+        db.notes = db.notes.filter((note) => !(note.id === filter.id && note.teacher_id === me.id))
+        const removed = before - db.notes.length
+        return { data: removed ? [{ id: filter.id }] : [], error: null } as Res<unknown>
+      })()
+      return Promise.resolve(result).then(onFulfilled, onRejected)
+    },
   }
   return builder
 }
@@ -386,8 +419,16 @@ export const fakeCloud = {
       const isLive = args.p_is_live === true
       if (meetingUrl && !/^https?:\/\//i.test(meetingUrl)) return err('meeting link must start with http:// or https://', '22023')
       if (isLive && (!topic || !meetingUrl)) return err('add a class title and meeting link before going live', '22023')
-      const row = meetingDefaults(me.id, { topic, meeting_url: meetingUrl, is_live: isLive, created_at: db.meetings.get(me.id)?.created_at })
-      db.meetings.set(me.id, row)
+      const existing = db.meetings.find((meeting) => meeting.teacher_id === me.id)
+      const row = meetingDefaults(me.id, {
+        topic,
+        meeting_title: topic,
+        meeting_url: meetingUrl,
+        is_live: isLive,
+        status: isLive ? 'live' : 'scheduled',
+        created_at: existing?.created_at,
+      })
+      db.meetings = [...db.meetings.filter((meeting) => meeting.id !== existing?.id), row]
       return { data: row, error: null }
     }
     if (name === 'set_my_batch_meeting') {
@@ -404,13 +445,57 @@ export const fakeCloud = {
           ? new Date(args.p_expires_at).toISOString()
           : new Date(Date.now() + duration * 60_000).toISOString())
         : null
+      const existing = db.meetings.find((meeting) => meeting.teacher_id === me.id && meeting.batch_name === batch)
       const row = meetingDefaults(me.id, {
-        topic, meeting_url: meetingUrl, is_live: isLive, batch_name: batch, teacher_name: teacher,
-        duration_minutes: duration, expires_at: expires,
-        created_at: db.meetings.get(me.id)?.created_at,
+        topic,
+        meeting_title: topic,
+        meeting_url: meetingUrl,
+        is_live: isLive,
+        status: isLive ? 'live' : (existing?.status ?? 'scheduled'),
+        batch_name: batch,
+        teacher_name: teacher,
+        duration_minutes: duration,
+        expires_at: expires,
+        scheduled_start: isLive ? new Date().toISOString() : existing?.scheduled_start,
+        created_at: existing?.created_at,
       })
-      db.meetings.set(me.id, row)
+      db.meetings = [...db.meetings.filter((meeting) => meeting.id !== existing?.id), row]
       return { data: row, error: null }
+    }
+    if (name === 'save_my_meeting') {
+      const title = clean(args.p_meeting_title, 140)
+      const meetingUrl = clean(args.p_meeting_url, 2000)
+      const batch = clean(args.p_batch_name, 80) || 'General'
+      const teacher = clean(args.p_teacher_name, 120)
+      const duration = Math.max(1, Math.min(480, Math.round(Number(args.p_duration_minutes) || 45)))
+      const startRaw = typeof args.p_scheduled_start === 'string' ? args.p_scheduled_start : new Date().toISOString()
+      const startMs = Date.parse(startRaw)
+      if (!title) return err('add a class title', '22023')
+      if (meetingUrl && !/^https?:\/\//i.test(meetingUrl)) return err('meeting link must start with http:// or https://', '22023')
+      if (!Number.isFinite(startMs)) return err('pick a valid start time', '22023')
+      const id = typeof args.p_id === 'string' ? args.p_id : null
+      const existing = id ? db.meetings.find((meeting) => meeting.id === id && meeting.teacher_id === me.id) : undefined
+      if (id && !existing) return err('meeting not found', '42501')
+      const row = meetingDefaults(me.id, {
+        meeting_title: title,
+        topic: title,
+        meeting_url: meetingUrl,
+        batch_name: batch,
+        teacher_name: teacher,
+        scheduled_start: new Date(startMs).toISOString(),
+        duration_minutes: duration,
+        status: 'scheduled',
+        created_at: existing?.created_at,
+      })
+      if (existing) row.id = existing.id
+      db.meetings = [...db.meetings.filter((meeting) => meeting.id !== existing?.id), row]
+      return { data: row, error: null }
+    }
+    if (name === 'delete_my_meeting') {
+      const id = String(args.p_id ?? '')
+      const before = db.meetings.length
+      db.meetings = db.meetings.filter((meeting) => !(meeting.id === id && meeting.teacher_id === me.id))
+      return { data: before !== db.meetings.length, error: null }
     }
     if (name === 'save_my_folder') {
       const batch = clean(args.p_batch_name, 80)
@@ -459,10 +544,10 @@ export const fakeCloud = {
       return { data: row, error: null }
     }
     if (name === 'delete_my_student_note') {
+      // Metadata only — the real function no longer touches storage.objects (that is blocked).
       const index = db.notes.findIndex((note) => note.id === String(args.p_note_id) && note.teacher_id === me.id)
       if (index < 0) return { data: false, error: null }
-      const [row] = db.notes.splice(index, 1)
-      if (row?.file_path) db.files.delete(row.file_path)
+      db.notes.splice(index, 1)
       return { data: true, error: null }
     }
     if (name === 'delete_my_folder') {
@@ -477,7 +562,7 @@ export const fakeCloud = {
       db.touched = true
       db.backups.delete(me.id)
       db.profiles.delete(me.id)
-      db.meetings.delete(me.id)
+      db.meetings = db.meetings.filter((meeting) => meeting.teacher_id !== me.id)
       db.folders = db.folders.filter((folder) => folder.teacher_id !== me.id)
       db.notes = db.notes.filter((note) => note.teacher_id !== me.id)
       for (const path of [...db.files.keys()]) if (path.startsWith(`${me.id}/`)) db.files.delete(path)
@@ -515,7 +600,7 @@ export function seedFakeBackup(userId: string, doc: unknown, updatedAt = new Dat
 /** Seeds a teacher's Student Hub meeting. */
 export function seedFakeMeeting(userId: string, row: Partial<MeetingRow> = {}) {
   const meeting = meetingDefaults(userId, row)
-  db.meetings.set(userId, meeting)
+  db.meetings.push(meeting)
   return meeting
 }
 
@@ -534,7 +619,8 @@ export function seedFakeFolder(userId: string, row: Partial<FolderRow> = {}) {
 }
 
 export const fakeBackupFor = (userId: string) => db.backups.get(userId)?.doc ?? null
-export const fakeMeetingFor = (userId: string) => db.meetings.get(userId) ?? null
+export const fakeMeetingFor = (userId: string) => db.meetings.find((meeting) => meeting.teacher_id === userId) ?? null
+export const fakeMeetingsFor = (userId: string) => db.meetings.filter((meeting) => meeting.teacher_id === userId)
 export const fakeNotesFor = (userId: string) => db.notes.filter((note) => note.teacher_id === userId)
 export const fakeFoldersFor = (userId: string) => db.folders.filter((folder) => folder.teacher_id === userId)
 export const fakeSnapshotFor = (userId: string, batch: string) => ({

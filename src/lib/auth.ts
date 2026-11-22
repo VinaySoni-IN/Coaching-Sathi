@@ -3,6 +3,7 @@
    source of truth; Supabase is used only for explicit, manual cloud backups. */
 import { canonicalEmail, checkEmail } from './email'
 import { cloudMessage, sb } from './cloud'
+import { purgeMyNoteFiles } from './studentHub'
 
 export interface Teacher { id: string; name: string; email: string }
 
@@ -143,6 +144,8 @@ export async function renameTeacher(name: string): Promise<Teacher> {
 /** Permanently removes the auth user and every row owned by it (profile, old state, sync log and cloud backup),
  *  then erases this device's local copy of the workspace. */
 export async function deleteAccount(teacherId: string): Promise<void> {
+  // Storage objects must go through the Storage API — a SQL delete of storage.objects is refused.
+  await purgeMyNoteFiles(teacherId)
   const { error } = await sb().rpc('delete_me')
   if (error) throw new Error(cloudMessage(error, 'Could not delete the account. Try again.'))
   clearLocalData(teacherId)

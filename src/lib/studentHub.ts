@@ -16,20 +16,29 @@ export const MIN_DURATION_MINUTES = 1
 export const MAX_DURATION_MINUTES = 480
 export const MEETING_DURATION_PRESETS = [30, 45, 60] as const
 export const UNFILED_FOLDER = 'Unfiled'
+/** A teacher can schedule this far ahead; the RPC enforces the same bound. */
+export const MAX_SCHEDULE_DAYS = 365
 
 export type StudentNoteKind = 'file' | 'link' | 'text'
+export type MeetingStatus = 'scheduled' | 'live' | 'ended'
+export type DurationUnit = 'minutes' | 'hours'
 
 export interface LiveMeeting {
+  id: string
   teacher_id: string
   teacher_name: string
   batch_name: string
+  /** Canonical title column (falls back to the legacy `topic`). */
+  meeting_title: string
   topic: string
   meeting_url: string
   /** Generated column: always equal to meeting_url (the spec's `meeting_link`). */
   meeting_link: string
+  scheduled_start: string | null
   is_live: boolean
   duration_minutes: number
   expires_at: string | null
+  status: MeetingStatus
   created_at: string
   updated_at: string
 }
@@ -64,11 +73,14 @@ export interface StudentNote {
 }
 
 export interface MeetingInput {
-  topic: string
-  meeting_url: string
-  is_live: boolean
+  /** null = create a new meeting, otherwise reschedule this one. */
+  id?: string | null
+  title: string
+  meetingUrl: string
   batchName: string
   teacherName: string
+  /** ISO timestamp. `null`/omitted means "start now". */
+  scheduledStart?: string | null
   durationMinutes: number
 }
 
@@ -109,17 +121,74 @@ export function meetingExpiresAt(durationMinutes: number, now = Date.now()): str
   return new Date(now + normaliseDuration(durationMinutes) * 60_000).toISOString()
 }
 
-export function isMeetingActive(meeting: LiveMeeting | null, now = Date.now()): boolean {
-  if (!meeting || meeting.is_live !== true) return false
-  if (!safeHttpUrl(meeting.meeting_url)) return false
+/** Minutes <-> hours toggle. `1.5` hours becomes `90` minutes before it reaches Supabase. */
+export function toDurationMinutes(value: number | string, unit: DurationUnit): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_DURATION_MINUTES
+  return normaliseDuration(unit === 'hours' ? n * 60 : n)
+}
+
+/** "45 Mins" / "1 Hr 30 Mins" / "2 Hrs" — used by both apps. */
+export function formatDurationLabel(durationMinutes: number | null | undefined): string {
+  const total = normaliseDuration(Number(durationMinutes ?? DEFAULT_DURATION_MINUTES))
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+  if (!hours) return `${minutes} Mins`
+  if (!minutes) return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'}`
+  return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'} ${minutes} Mins`
+}
+
+/** Effective state from the clock, matching the DB's student_hub_meeting_state(). */
+export function meetingState(meeting: LiveMeeting | null, now = Date.now()): MeetingStatus {
+  if (!meeting) return 'ended'
+  if (meeting.status === 'ended') return 'ended'
+  const start = Date.parse(meeting.scheduled_start ?? meeting.created_at ?? '')
   const expiry = Date.parse(meeting.expires_at ?? '')
-  return Number.isFinite(expiry) ? expiry > now : true
+  if (Number.isFinite(start) && start > now) return 'scheduled'
+  if (Number.isFinite(expiry) && expiry > now) return 'live'
+  return Number.isFinite(start) ? 'ended' : 'scheduled'
+}
+
+export function isMeetingActive(meeting: LiveMeeting | null, now = Date.now()): boolean {
+  if (!meeting) return false
+  if (meetingState(meeting, now) !== 'live') return false
+  return Boolean(safeHttpUrl(meeting.meeting_url || meeting.meeting_link))
 }
 
 export function remainingMs(meeting: LiveMeeting | null, now = Date.now()): number {
   if (!meeting?.expires_at) return 0
   const expiry = Date.parse(meeting.expires_at)
   return Number.isFinite(expiry) ? Math.max(0, expiry - now) : 0
+}
+
+/** Milliseconds until a scheduled meeting starts (0 when it has already started). */
+export function startsInMs(meeting: LiveMeeting | null, now = Date.now()): number {
+  if (!meeting?.scheduled_start) return 0
+  const start = Date.parse(meeting.scheduled_start)
+  return Number.isFinite(start) ? Math.max(0, start - now) : 0
+}
+
+export function meetingTitle(meeting: LiveMeeting | null): string {
+  return cleanLine(meeting?.meeting_title || meeting?.topic, 140) || 'Live class'
+}
+
+/** Deep link a student can open directly: .../student-hub/?note=<note_id> */
+export function noteShareUrl(noteId: string): string {
+  const base = studentHubUrl()
+  const id = cleanLine(noteId, 64)
+  return id ? `${base}?note=${encodeURIComponent(id)}` : base
+}
+
+/** Local <-> ISO helpers for <input type="datetime-local">. */
+export function toLocalInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+export function fromLocalInputValue(value: string): string | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
 export async function copyToClipboard(value: string): Promise<void> {
@@ -146,31 +215,50 @@ export async function currentTeacherId(): Promise<string> {
   return data.user.id
 }
 
-export async function fetchMyMeeting(teacherId: string): Promise<LiveMeeting | null> {
-  const { data, error } = await sb().from('live_meetings').select('*').eq('teacher_id', teacherId).maybeSingle()
+/** Every meeting this teacher owns (all batches), newest schedule first. */
+export async function fetchMyMeetings(teacherId: string): Promise<LiveMeeting[]> {
+  const { data, error } = await sb()
+    .from('live_meetings')
+    .select('*')
+    .eq('teacher_id', teacherId)
+    .order('scheduled_start', { ascending: true })
   if (error) throw error
-  return (data as LiveMeeting | null) ?? null
+  return (data ?? []) as LiveMeeting[]
 }
 
+/** Create a new meeting, or reschedule one the teacher already owns. */
 export async function saveMyMeeting(input: MeetingInput): Promise<LiveMeeting> {
-  const topic = cleanLine(input.topic, 140)
-  const meetingUrl = input.meeting_url.trim() ? safeHttpUrl(input.meeting_url) : null
-  if (input.meeting_url.trim() && !meetingUrl) throw new Error('Enter a valid http:// or https:// meeting link.')
-  if (input.is_live && (!topic || !meetingUrl)) throw new Error('Add a class title and meeting link before going live.')
-  const duration = normaliseDuration(input.durationMinutes)
-  const { data, error } = await sb().rpc('set_my_batch_meeting', {
-    p_topic: topic,
+  const title = cleanLine(input.title, 140)
+  if (!title) throw new Error('Add a class title first.')
+  const rawUrl = input.meetingUrl.trim()
+  const meetingUrl = rawUrl ? safeHttpUrl(rawUrl) : null
+  if (rawUrl && !meetingUrl) throw new Error('Enter a valid http:// or https:// meeting link.')
+
+  const scheduledStart = input.scheduledStart ?? new Date().toISOString()
+  const startMs = Date.parse(scheduledStart)
+  if (!Number.isFinite(startMs)) throw new Error('Pick a valid start date and time.')
+  if (startMs > Date.now() + MAX_SCHEDULE_DAYS * 86_400_000) {
+    throw new Error('Pick a start time within the next year.')
+  }
+
+  const { data, error } = await sb().rpc('save_my_meeting', {
+    p_id: input.id ?? null,
+    p_meeting_title: title,
     p_meeting_url: meetingUrl ?? '',
-    p_is_live: input.is_live,
     p_batch_name: cleanLine(input.batchName, 80) || DEFAULT_BATCH_NAME,
     p_teacher_name: cleanLine(input.teacherName, 120),
-    p_duration_minutes: duration,
-    // The DB recomputes/validates this from `now() + duration`, so clock skew cannot extend a class.
-    p_expires_at: meetingExpiresAt(duration),
+    p_scheduled_start: new Date(startMs).toISOString(),
+    p_duration_minutes: normaliseDuration(input.durationMinutes),
   })
   if (error) throw error
-  if (!data) throw new Error('The live meeting could not be saved. Try again.')
+  if (!data) throw new Error('The meeting could not be saved. Try again.')
   return data as LiveMeeting
+}
+
+export async function deleteMeeting(meetingId: string): Promise<void> {
+  const { data, error } = await sb().rpc('delete_my_meeting', { p_id: meetingId })
+  if (error) throw error
+  if (data !== true) throw new Error('This meeting was already removed.')
 }
 
 /** Folders are ALREADY scoped to the selected batch — no cross-batch rows can leak in. */
@@ -295,10 +383,40 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
   }
 }
 
-export async function deleteStudentNote(noteId: string): Promise<void> {
-  const { data, error } = await sb().rpc('delete_my_student_note', { p_note_id: noteId })
+/**
+ * Delete a note the way Supabase requires: the object goes first through the Storage API, then the
+ * metadata row. Deleting `storage.objects` rows in SQL is rejected with
+ * "Direct deletion from storage tables is not allowed. Use the Storage API instead."
+ */
+export async function deleteStudentNote(note: Pick<StudentNote, 'id' | 'file_path'>): Promise<void> {
+  const path = cleanLine(note.file_path, 500)
+  if (path) {
+    const { error } = await sb().storage.from(STUDENT_NOTES_BUCKET).remove([path])
+    // A missing object is fine — the metadata row still has to go. Any other failure stops here so
+    // the teacher never ends up with a row pointing at a file that still exists.
+    if (error && !/not\s*found|does not exist/i.test(error.message ?? '')) {
+      throw new Error('Could not delete the stored file. Check your connection and try again.')
+    }
+  }
+  const { data, error } = await sb()
+    .from('student_notes')
+    .delete()
+    .eq('id', note.id)
+    .select('id')
   if (error) throw error
-  if (data !== true) throw new Error('This note was already removed.')
+  if (!Array.isArray(data) || !data.length) throw new Error('This note was already removed.')
+}
+
+/** Removes every Storage object in this teacher's folder before the account row is wiped. */
+export async function purgeMyNoteFiles(teacherId: string): Promise<void> {
+  try {
+    const { data, error } = await sb().storage.from(STUDENT_NOTES_BUCKET).list(teacherId, { limit: 1000 })
+    if (error || !Array.isArray(data) || !data.length) return
+    const paths = data.map((item) => `${teacherId}/${item.name}`)
+    await sb().storage.from(STUDENT_NOTES_BUCKET).remove(paths)
+  } catch {
+    // Never block account deletion on storage cleanup; the DB rows are the source of truth.
+  }
 }
 
 /** Private bucket: a short-lived signed URL, created only for the signed-in teacher's own files. */

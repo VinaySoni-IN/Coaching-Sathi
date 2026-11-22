@@ -8,6 +8,7 @@ import { seedJson } from '../src/lib/store'
 import {
   fakeFoldersFor,
   fakeMeetingFor,
+  fakeMeetingsFor,
   fakeNotesFor,
   fakeStorageFileCount,
   seedFakeFolder,
@@ -58,19 +59,22 @@ describe('Student Hub Manager (SH)', () => {
     expect((await screen.findAllByText('Student Hub link copied')).length).toBeGreaterThan(0)
   })
 
-  it('SH-03 saves class details, then toggles the Supabase live state ON through the verified session', async () => {
-    seedFakeMeeting('t1', { is_live: false })
+  it('SH-03 schedules a class and lists it with a SCHEDULED badge', async () => {
     await openHub()
-    fireEvent.change(screen.getByLabelText('Class topic / title'), { target: { value: 'Physics — Gravitation' } })
-    fireEvent.change(screen.getByLabelText('Meeting URL'), { target: { value: 'https://meet.google.com/abc-defg-hij' } })
-    fireEvent.click(screen.getByRole('button', { name: /Save class details/ }))
-    await waitFor(() => expect(screen.getAllByText('Class details saved').length).toBeGreaterThan(0))
-    expect(fakeMeetingFor('t1')?.meeting_url).toContain('meet.google.com')
+    const later = new Date(Date.now() + 2 * 60 * 60_000)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    fireEvent.change(screen.getByLabelText('Start date and time'), {
+      target: { value: `${later.getFullYear()}-${pad(later.getMonth() + 1)}-${pad(later.getDate())}T${pad(later.getHours())}:${pad(later.getMinutes())}` },
+    })
+    fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Physics — Gravitation' } })
+    fireEvent.change(screen.getByLabelText('Meeting link'), { target: { value: 'https://meet.google.com/abc-defg-hij' } })
+    fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Live class status' }))
-    await waitFor(() => expect(fakeMeetingFor('t1')?.is_live).toBe(true))
-    expect(screen.getByRole('switch', { name: 'Live class status' }).getAttribute('aria-checked')).toBe('true')
-    expect((await screen.findAllByText(/Live class is ON/)).length).toBeGreaterThan(0)
+    await waitFor(() => expect(fakeMeetingsFor('t1')).toHaveLength(1))
+    expect(fakeMeetingFor('t1')?.meeting_url).toContain('meet.google.com')
+    expect(fakeMeetingFor('t1')?.batch_name).toBe('NEET Biology')
+    expect(fakeMeetingFor('t1')?.duration_minutes).toBe(45)
+    expect((await screen.findAllByText('SCHEDULED')).length).toBeGreaterThan(0)
   })
 
   it('SH-04 uploads a file note with subject/title tags, then removes it through the shared confirmation dialog', async () => {
@@ -98,39 +102,39 @@ describe('Student Hub Manager (SH)', () => {
     expect(fakeStorageFileCount()).toBe(0)
   })
 
-  it('SH-05 lists previously uploaded teacher notes and refuses to go live without a valid link', async () => {
+  it('SH-05 lists previously uploaded teacher notes and refuses a non-http meeting link', async () => {
     seedFakeStudentNote('t1', { title: 'Formula sheet', subject: 'Maths', kind: 'text', body: 'Area of a circle: pi r squared.', batch_name: 'NEET Biology' })
     await openHub()
     expect(await screen.findByText('Formula sheet')).toBeTruthy()
     expect(screen.getByText('Maths')).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Class topic / title'), { target: { value: 'Doubt clearing' } })
-    fireEvent.change(screen.getByLabelText('Meeting URL'), { target: { value: 'javascript:alert(1)' } })
-    fireEvent.click(screen.getByRole('switch', { name: 'Live class status' }))
+    fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Doubt clearing' } })
+    fireEvent.change(screen.getByLabelText('Meeting link'), { target: { value: 'javascript:alert(1)' } })
+    fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
     expect(await screen.findByText(/valid http/i)).toBeTruthy()
     expect(fakeMeetingFor('t1')).toBeNull()
   })
 
-  it('SH-06 syncs duration_minutes and a computed expires_at when the class goes live', async () => {
+  it('SH-06 converts hours to minutes through the unit toggle and saves expires_at', async () => {
     await openHub()
-    expect(screen.getByRole('button', { name: '30 mins' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '45 mins' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '60 mins' })).toBeTruthy()
-    expect(screen.getByLabelText('Custom duration in minutes')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'minutes' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '60m' })).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Class topic / title'), { target: { value: 'Thermodynamics' } })
-    fireEvent.change(screen.getByLabelText('Meeting URL'), { target: { value: 'https://meet.google.com/abc-defg-hij' } })
-    fireEvent.click(screen.getByRole('button', { name: '60 mins' }))
-    fireEvent.click(screen.getByRole('button', { name: /Save class details/ }))
-    await waitFor(() => expect(fakeMeetingFor('t1')?.duration_minutes).toBe(60))
+    fireEvent.click(screen.getByRole('button', { name: 'hours' }))
+    fireEvent.change(screen.getByLabelText('Duration in hours'), { target: { value: '1.5' } })
+    // 1.5 hours must be stored as 90 minutes, and labelled "1 Hr 30 Mins".
+    expect(await screen.findByText(/1 Hr 30 Mins/)).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Live class status' }))
-    await waitFor(() => expect(fakeMeetingFor('t1')?.is_live).toBe(true))
+    fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Thermodynamics' } })
+    fireEvent.change(screen.getByLabelText('Meeting link'), { target: { value: 'https://meet.google.com/abc-defg-hij' } })
+    fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
+    await waitFor(() => expect(fakeMeetingFor('t1')?.duration_minutes).toBe(90))
+
     const expiry = Date.parse(fakeMeetingFor('t1')?.expires_at ?? '')
+    const start = Date.parse(fakeMeetingFor('t1')?.scheduled_start ?? '')
     expect(Number.isFinite(expiry)).toBe(true)
-    expect(expiry).toBeGreaterThan(Date.now())
-    expect(expiry - Date.now()).toBeLessThanOrEqual(60 * 60_000 + 5000)
-    expect((await screen.findAllByText(/60 Mins/)).length).toBeGreaterThan(0)
+    expect(expiry - start).toBe(90 * 60_000)
   })
 
   it('SH-07 tags every folder and note with the selected Batch Name', async () => {
@@ -178,6 +182,53 @@ describe('Student Hub Manager (SH)', () => {
     expect(download.getAttribute('href')).toContain('download=chapter.pdf')
     expect(read('student-hub/portal.js')).not.toContain('getPublicUrl')
   })
+  it('SH-10 keeps several meetings at once, shows live/scheduled badges and deletes one', async () => {
+    const future = new Date(Date.now() + 3 * 60 * 60_000).toISOString()
+    seedFakeMeeting('t1', { meeting_title: 'Physics live', batch_name: 'NEET Biology', scheduled_start: new Date().toISOString(), status: 'live' })
+    seedFakeMeeting('t1', { meeting_title: 'Chemistry tomorrow', batch_name: 'JEE Maths', scheduled_start: future, status: 'scheduled' })
+    await openHub()
+
+    expect(await screen.findByText('Physics live')).toBeTruthy()
+    expect(screen.getByText('Chemistry tomorrow')).toBeTruthy()
+    expect(screen.getAllByText('LIVE NOW').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('SCHEDULED').length).toBeGreaterThan(0)
+    expect(fakeMeetingsFor('t1')).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Chemistry tomorrow' }))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete meeting' }))
+    await waitFor(() => expect(fakeMeetingsFor('t1')).toHaveLength(1))
+    expect(fakeMeetingsFor('t1')[0]?.meeting_title).toBe('Physics live')
+  })
+
+  it('SH-11 gives every note a copyable direct share link (?note=<id>)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const note = seedFakeStudentNote('t1', { title: 'Share me', kind: 'text', body: 'Important', batch_name: 'NEET Biology' })
+    await openHub()
+
+    const buttons = await screen.findAllByRole('button', { name: /^Copy link$/ })
+    fireEvent.click(buttons[0])
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`?note=${note.id}`)))
+    expect(writeText.mock.calls[0][0]).toMatch(/\/student-hub\/\?note=/)
+  })
+
+  it('SH-12 deletes the Storage object before the note row, never the other way round', async () => {
+    const src = read('src/lib/studentHub.ts')
+    const removeAt = src.indexOf('.storage.from(STUDENT_NOTES_BUCKET).remove([path])')
+    const deleteAt = src.indexOf(".delete()\n    .eq('id', note.id)")
+    expect(removeAt).toBeGreaterThan(-1)
+    expect(deleteAt).toBeGreaterThan(removeAt)
+    expect(src).not.toContain('delete from storage.objects')
+
+    const note = seedFakeStudentNote('t1', { title: 'File note', kind: 'file', body: '', file_path: 't1/x.pdf', file_name: 'x.pdf', batch_name: 'NEET Biology' })
+    await openHub()
+    fireEvent.click(screen.getByRole('button', { name: `Delete ${note.title}` }))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete note' }))
+    await waitFor(() => expect(fakeNotesFor('t1')).toHaveLength(0))
+    expect(fakeStorageFileCount()).toBe(0)
+  })
 })
 
 describe('Student Portal and RLS (SP)', () => {
@@ -197,7 +248,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain(".from('live_meetings')")
     expect(portal).toContain(".from('student_notes')")
     expect(portal).toContain(".from('notes')")
-    expect(portal).toContain('No live class right now')
+    expect(portal).toContain('No scheduled classes right now')
     expect(portal).toContain('Join Now')
     expect(portal).toContain('postgres_changes')
     expect(portal).not.toMatch(/\.(insert|update|delete|upsert)\s*\(/)
@@ -233,7 +284,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(html).not.toMatch(/<nav\b/i)
 
     const portal = read('student-hub/portal.js')
-    expect(portal).toContain('import { cleanBody, cleanLine, escapeHtml')
+    expect(portal).toContain("from './sanitize.js'")
     expect(portal).toContain("name: 'student_name'")
     expect(portal).toContain("batch: 'selected_batch'")
     expect(portal).toContain("teacher: 'selected_teacher_id'")
@@ -248,9 +299,12 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain("setHeader('X-Student-Hub-Teacher-Id'")
     expect(portal).toContain('function scopeHeaders()')
     expect(portal).toContain('/storage/v1/object/${STORAGE_BUCKET}/')
-    expect(portal).toContain('Duration: ${formatDuration(row.duration_minutes)}')
+    expect(portal).toContain('Duration: ${formatDurationLabel(row.duration_minutes)}')
     expect(portal).toContain('Ends in ${formatRemaining(ms)}')
-    expect(portal).toContain('This class has ended')
+    expect(portal).toContain('Opens at start time')
+    expect(portal).toContain('noteShareUrl')
+    expect(portal).toContain("new URLSearchParams(location.search)")
+    expect(portal).toContain('Copy share link')
     expect(portal).toContain('folder-group')
     expect(portal).toContain('escapeHtml(teacher.name)')
 
@@ -268,6 +322,8 @@ describe('Student Portal and RLS (SP)', () => {
       read('supabase/migrations/20261121175754_student_hub_scope_headers.sql'),
       read('supabase/migrations/20261121175822_student_hub_private_storage.sql'),
       read('supabase/migrations/20261121175838_student_hub_snapshot_scope_guard.sql'),
+      read('supabase/migrations/20261122182327_student_hub_multi_meetings.sql'),
+      read('supabase/migrations/20261122182349_student_hub_meeting_rpcs_share.sql'),
     ].join('\n')
     expect(sql).toContain('duration_minutes integer not null default 45')
     expect(sql).toContain('expires_at timestamptz')
@@ -292,12 +348,44 @@ describe('Student Portal and RLS (SP)', () => {
     expect(sql).toContain('student hub scope headers must match')
     expect(sql).toContain('revoke insert, update, delete on storage.objects from anon')
 
-    expect(read('src/lib/studentHub.ts')).toContain('export function meetingExpiresAt')
-    expect(read('src/lib/studentHub.ts')).toContain("rpc('set_my_batch_meeting'")
-    expect(read('src/lib/studentHub.ts')).toContain('export async function signedNoteUrl')
+    // v3: multiple meetings, scheduling, storage-safe deletion, direct note links.
+    expect(sql).toContain('alter table public.live_meetings drop constraint if exists live_meetings_pkey')
+    expect(sql).toContain('add constraint live_meetings_pkey primary key (id)')
+    expect(sql).toContain('add column if not exists meeting_title text')
+    expect(sql).toContain('add column if not exists scheduled_start timestamptz')
+    expect(sql).toContain("check (status in ('scheduled', 'live', 'ended'))")
+    expect(sql).toContain('create or replace function public.student_hub_meeting_state(')
+    expect(sql).toContain('create or replace function public.save_my_meeting(')
+    expect(sql).toContain('create or replace function public.delete_my_meeting(p_id uuid)')
+    expect(sql).toContain('grant execute on function public.save_my_meeting(uuid, text, text, text, text, timestamptz, integer) to authenticated')
+    expect(sql).toContain('coalesce(n.storage_path, n.file_path) as storage_path')
+    // The storage.objects deletes that caused "Direct deletion from storage tables is not allowed"
+    // must be gone from the SQL entirely.
+    const v3 = read('supabase/migrations/20261122182349_student_hub_meeting_rpcs_share.sql')
+    expect(v3).not.toMatch(/delete\s+from\s+storage\.objects/i)
+    expect(sql).toContain("grant execute on function public.delete_my_student_note(uuid) to authenticated")
+    // anon sees only live/upcoming rows inside its scope
+    expect(sql).toContain("public.student_hub_meeting_state(scheduled_start, expires_at, status) in ('scheduled', 'live')")
+    // snapshot returns the meetings array as well as the legacy single meeting
+    expect(sql).toContain("'meetings', coalesce(")
+
+    const lib = read('src/lib/studentHub.ts')
+    expect(lib).toContain('export function formatDurationLabel')
+    expect(lib).toContain('export async function fetchMyMeetings')
+    expect(lib).toContain("rpc('save_my_meeting'")
+    expect(lib).toContain("rpc('delete_my_meeting'")
+    expect(lib).toContain('export function noteShareUrl')
+    expect(lib).toContain('export async function signedNoteUrl')
+    expect(lib).toContain('export async function purgeMyNoteFiles')
     expect(read('src/lib/sanitize.ts')).toContain('export function escapeHtml')
-    expect(read('src/components/StudentHubManager.tsx')).toContain('Meeting Duration')
-    expect(read('src/components/StudentHubManager.tsx')).toContain('signedNoteUrl')
+    const manager = read('src/components/StudentHubManager.tsx')
+    expect(manager).toContain('Scheduled &amp; live meetings')
+    expect(manager).toContain('type="datetime-local"')
+    expect(manager).toContain('Start Now')
+    expect(manager).toContain('LIVE NOW')
+    expect(manager).toContain('SCHEDULED')
+    expect(manager).toContain('Copy link')
+    expect(manager).toContain('signedNoteUrl')
     expect(read('src/App.tsx')).toContain('batches={state.batches.map')
   })
 })

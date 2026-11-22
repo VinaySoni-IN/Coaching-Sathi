@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import {
   AlertCircle,
   BookOpen,
+  CalendarClock,
   Check,
   Clock3,
   Copy,
@@ -13,10 +14,12 @@ import {
   GraduationCap,
   Link2,
   Loader2,
+  PlayCircle,
   Radio,
   Timer,
   Trash2,
   Upload,
+  Users,
   Video,
   WifiOff,
 } from 'lucide-react'
@@ -31,24 +34,32 @@ import {
   currentTeacherId,
   DEFAULT_BATCH_NAME,
   DEFAULT_DURATION_MINUTES,
+  deleteMeeting,
   deleteStudentFolder,
   deleteStudentNote,
   fetchMyFolders,
-  fetchMyMeeting,
+  fetchMyMeetings,
   fetchMyNotes,
   formatBytes,
-  isMeetingActive,
+  formatDurationLabel,
+  fromLocalInputValue,
   MAX_DURATION_MINUTES,
   MEETING_DURATION_PRESETS,
-  meetingExpiresAt,
+  meetingState,
+  meetingTitle,
   MIN_DURATION_MINUTES,
-  normaliseDuration,
+  noteShareUrl,
   safeHttpUrl,
-  signedNoteUrl,
   saveMyMeeting,
+  signedNoteUrl,
+  startsInMs,
   studentHubUrl,
+  toDurationMinutes,
+  toLocalInputValue,
   UNFILED_FOLDER,
+  type DurationUnit,
   type LiveMeeting,
+  type MeetingStatus,
   type StudentFolder,
   type StudentNote,
   type StudentNoteKind,
@@ -63,14 +74,36 @@ interface Props {
   ask: (confirm: Omit<Confirm, 'run'>, run: () => void) => void
 }
 
-const field = 'w-full rounded-2xl border border-white/15 bg-black/25 px-4 py-3 text-[15px] outline-none placeholder:text-white/35 focus:border-white/45'
+const field = 'w-full min-w-0 rounded-xl border border-white/15 bg-black/25 px-4 py-3 text-[15px] outline-none placeholder:text-white/35 focus:border-white/45 focus:ring-2 focus:ring-white/15'
 const label = 'mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-white/70'
-const action = 'lens glass-btn relative z-10 inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-[14px] font-semibold disabled:opacity-40'
-const chip = 'glass-btn relative z-10 inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold'
+const action = 'lens glass-btn relative z-10 inline-flex h-11 flex-wrap items-center justify-center gap-2 rounded-xl px-5 text-[14px] font-semibold disabled:opacity-40'
+const smallAction = 'glass-btn inline-flex h-9 flex-wrap items-center justify-center gap-1.5 rounded-xl bg-white/8 px-3 text-[12px] font-semibold text-white/85 hover:bg-white/14 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40'
+const chip = 'glass-btn relative z-10 inline-flex h-9 flex-wrap items-center gap-1.5 rounded-xl px-3 text-[12px] font-semibold'
+const card = 'glass glass-deep relative z-10 rounded-3xl p-5 sm:p-6'
+const stack = 'flex flex-wrap items-center gap-3'
 
-function formatWhen(iso: string): string {
+function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return ''
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+function relativeStart(meeting: LiveMeeting, now: number): string {
+  const ms = startsInMs(meeting, now)
+  if (ms <= 0) return ''
+  const minutes = Math.ceil(ms / 60_000)
+  if (minutes < 60) return `in ${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `in ${hours} hr ${minutes % 60 ? `${minutes % 60} min` : ''}`.trim()
+  return `in ${Math.floor(hours / 24)} day${Math.floor(hours / 24) === 1 ? '' : 's'}`
 }
 
 function noteTypeLabel(kind: StudentNoteKind): string {
@@ -78,6 +111,20 @@ function noteTypeLabel(kind: StudentNoteKind): string {
   if (kind === 'link') return 'Link'
   return 'Text note'
 }
+
+const STATUS_STYLE: Record<MeetingStatus, string> = {
+  live: 'bg-present/15 text-present ring-1 ring-present/35',
+  scheduled: 'bg-sky-400/15 text-sky-100 ring-1 ring-sky-300/30',
+  ended: 'bg-white/8 text-white/55 ring-1 ring-white/15',
+}
+
+const STATUS_LABEL: Record<MeetingStatus, string> = {
+  live: 'LIVE NOW',
+  scheduled: 'SCHEDULED',
+  ended: 'EXPIRED',
+}
+
+const STATUS_ORDER: Record<MeetingStatus, number> = { live: 0, scheduled: 1, ended: 2 }
 
 export default function StudentHubManager({ teacher, batches, initialBatchName, say, ask }: Props) {
   const teacherName = cleanLine(teacher.name, 120)
@@ -90,19 +137,25 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
   const [loading, setLoading] = useState(true)
   const [teacherId, setTeacherId] = useState<string | null>(null)
-  const [meeting, setMeeting] = useState<LiveMeeting | null>(null)
+  const [meetings, setMeetings] = useState<LiveMeeting[]>([])
   const [folders, setFolders] = useState<StudentFolder[]>([])
   const [notes, setNotes] = useState<StudentNote[]>([])
   const [noteUrls, setNoteUrls] = useState<Record<string, { open: string; download: string }>>({})
-  const [topic, setTopic] = useState('')
-  const [meetingUrl, setMeetingUrl] = useState('')
-  const [isLive, setIsLive] = useState(false)
-  const [duration, setDuration] = useState(DEFAULT_DURATION_MINUTES)
-  const [customDuration, setCustomDuration] = useState('')
+
+  // Meeting form — one date/time clock, one duration with a Minutes/Hours unit.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [meetingFormTitle, setMeetingFormTitle] = useState('')
+  const [meetingFormUrl, setMeetingFormUrl] = useState('')
+  const [startLocal, setStartLocal] = useState(() => toLocalInputValue(new Date()))
+  const [durationValue, setDurationValue] = useState(String(DEFAULT_DURATION_MINUTES))
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>('minutes')
+
   const [busy, setBusy] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
   const [kind, setKind] = useState<StudentNoteKind>('file')
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
@@ -112,6 +165,15 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
   const [file, setFile] = useState<File | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
 
+  const durationMinutes = toDurationMinutes(durationValue, durationUnit)
+  const scheduledIso = fromLocalInputValue(startLocal)
+
+  // Live badges and countdowns tick without re-fetching anything.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
+
   // Reload everything when the teacher switches batches. Folders/notes only ever come back for
   // (teacher_id, batch_name), so a different batch can never show another batch's materials.
   useEffect(() => {
@@ -119,18 +181,14 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     void (async () => {
       try {
         const uid = await currentTeacherId()
-        const [myMeeting, myFolders, myNotes] = await Promise.all([
-          fetchMyMeeting(uid),
+        const [myMeetings, myFolders, myNotes] = await Promise.all([
+          fetchMyMeetings(uid),
           fetchMyFolders(uid, effectiveBatch),
           fetchMyNotes(uid, effectiveBatch),
         ])
         if (!alive) return
         setTeacherId(uid)
-        setMeeting(myMeeting)
-        setTopic(myMeeting?.topic ?? '')
-        setMeetingUrl(myMeeting?.meeting_url ?? '')
-        setIsLive(Boolean(myMeeting?.is_live))
-        setDuration(normaliseDuration(myMeeting?.duration_minutes ?? DEFAULT_DURATION_MINUTES))
+        setMeetings(myMeetings)
         setFolders(myFolders)
         setNotes(myNotes)
         setFolderName('')
@@ -143,6 +201,15 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     })()
     return () => { alive = false }
   }, [effectiveBatch])
+
+  const sortedMeetings = useMemo(
+    () => [...meetings].sort((a, b) => {
+      const byState = STATUS_ORDER[meetingState(a, now)] - STATUS_ORDER[meetingState(b, now)]
+      if (byState) return byState
+      return String(a.scheduled_start ?? '').localeCompare(String(b.scheduled_start ?? ''))
+    }),
+    [meetings, now],
+  )
 
   const groupedNotes = useMemo(() => {
     const groups = new Map<string, StudentNote[]>()
@@ -188,34 +255,84 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     if (fileInput.current) fileInput.current.value = ''
   }
 
-  const saveMeeting = async (nextLive: boolean) => {
+  const resetMeetingForm = () => {
+    setEditingId(null)
+    setMeetingFormTitle('')
+    setMeetingFormUrl('')
+    setStartLocal(toLocalInputValue(new Date()))
+    setDurationValue(String(DEFAULT_DURATION_MINUTES))
+    setDurationUnit('minutes')
+  }
+
+  const saveMeeting = async (start: string | null) => {
     if (busy) return
     setError(null)
     setStatus(null)
     setBusy(true)
     try {
       const row = await saveMyMeeting({
-        topic,
-        meeting_url: meetingUrl,
-        is_live: nextLive,
+        id: editingId,
+        title: meetingFormTitle,
+        meetingUrl: meetingFormUrl,
         batchName: effectiveBatch,
         teacherName,
-        durationMinutes: duration,
+        scheduledStart: start,
+        durationMinutes,
       })
-      setMeeting(row)
-      setTopic(row.topic)
-      setMeetingUrl(row.meeting_url)
-      setIsLive(row.is_live)
-      setDuration(normaliseDuration(row.duration_minutes))
-      const message = row.is_live
-        ? `Live class is ON — ${row.duration_minutes} mins for ${effectiveBatch}`
-        : 'Class details saved'
+      setMeetings((previous) => {
+        const rest = previous.filter((meeting) => meeting.id !== row.id)
+        return [...rest, row]
+      })
+      resetMeetingForm()
+      const stateNow = meetingState(row)
+      const message = stateNow === 'live'
+        ? `Class is LIVE for ${row.batch_name} · ${formatDurationLabel(row.duration_minutes)}`
+        : `Scheduled for ${formatWhen(row.scheduled_start)} · ${formatDurationLabel(row.duration_minutes)}`
       setStatus(message)
       say(message)
     } catch (e) {
-      setError(cloudMessage(e, 'Could not save the live meeting.'))
+      setError(cloudMessage(e, 'Could not save this meeting.'))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const startNow = async () => {
+    setStartLocal(toLocalInputValue(new Date()))
+    await saveMeeting(new Date().toISOString())
+  }
+
+  const editMeeting = (meeting: LiveMeeting) => {
+    setEditingId(meeting.id)
+    setMeetingFormTitle(meetingTitle(meeting))
+    setMeetingFormUrl(meeting.meeting_url ?? '')
+    setStartLocal(toLocalInputValue(new Date(meeting.scheduled_start ?? new Date().toISOString())))
+    const minutes = Number(meeting.duration_minutes ?? DEFAULT_DURATION_MINUTES)
+    if (minutes % 60 === 0) {
+      setDurationUnit('hours')
+      setDurationValue(String(minutes / 60))
+    } else {
+      setDurationUnit('minutes')
+      setDurationValue(String(minutes))
+    }
+    if (meeting.batch_name !== effectiveBatch) setSelectedBatch(meeting.batch_name)
+    setStatus(null)
+    setError(null)
+  }
+
+  const removeMeeting = async (meetingId: string) => {
+    setError(null)
+    setDeletingId(meetingId)
+    try {
+      await deleteMeeting(meetingId)
+      setMeetings((previous) => previous.filter((meeting) => meeting.id !== meetingId))
+      if (editingId === meetingId) resetMeetingForm()
+      setStatus('Meeting removed')
+      say('Meeting removed')
+    } catch (e) {
+      setError(cloudMessage(e, 'Could not remove this meeting.'))
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -227,6 +344,16 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       say('Student Hub link copied')
     } catch {
       setError('Could not copy automatically. Use the link shown below.')
+    }
+  }
+
+  const copyNoteLink = async (note: StudentNote) => {
+    try {
+      await copyToClipboard(noteShareUrl(note.id))
+      setStatus('Direct note link copied')
+      say('Note link copied')
+    } catch {
+      setError('Could not copy the link. Copy it from the note row instead.')
     }
   }
 
@@ -282,12 +409,13 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     }
   }
 
-  const removeNote = async (noteId: string) => {
+  const removeNote = async (note: StudentNote) => {
     setError(null)
-    setDeletingId(noteId)
+    setDeletingId(note.id)
     try {
-      await deleteStudentNote(noteId)
-      setNotes((previous) => previous.filter((note) => note.id !== noteId))
+      // Storage object first (Storage API), metadata row second — never the other way round.
+      await deleteStudentNote(note)
+      setNotes((previous) => previous.filter((row) => row.id !== note.id))
       setStatus('Note removed from Student Hub')
       say('Note removed')
     } catch (e) {
@@ -317,11 +445,11 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     ask(
       {
         title: 'Delete this note?',
-        lines: [note.title, 'Students will no longer see this material in the Student Hub.'],
+        lines: [note.title, 'The file is removed from storage first, then the note row. Students will no longer see it.'],
         confirmLabel: 'Delete note',
         danger: true,
       },
-      () => { void removeNote(note.id) },
+      () => { void removeNote(note) },
     )
   }
 
@@ -337,6 +465,18 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     )
   }
 
+  const confirmRemoveMeeting = (meeting: LiveMeeting) => {
+    ask(
+      {
+        title: 'Delete this meeting?',
+        lines: [meetingTitle(meeting), `${meeting.batch_name} · ${formatWhen(meeting.scheduled_start)}`, 'Students will no longer see it in the Student Hub.'],
+        confirmLabel: 'Delete meeting',
+        danger: true,
+      },
+      () => { void removeMeeting(meeting.id) },
+    )
+  }
+
   if (loading) {
     return (
       <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="glass glass-deep mt-4 rounded-[32px] px-6 py-12 text-center">
@@ -346,19 +486,18 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     )
   }
 
-  const endsAt = meetingExpiresAt(duration)
-  const liveNow = isMeetingActive(meeting)
+  const liveCount = sortedMeetings.filter((meeting) => meetingState(meeting, now) === 'live').length
 
   return (
-    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-      <div className="flex items-end justify-between gap-3">
-        <div>
+    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-2">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[.14em] text-white/65"><GraduationCap size={13} /> {teacherName}</p>
           <h1 className="font-display text-[31px] font-semibold leading-[1.05] tracking-tight">Student Hub Manager</h1>
-          <p className="mt-1 text-[13px] text-white/65">Live class and study materials, organised by batch.</p>
+          <p className="mt-1 text-[13px] text-white/65">Schedule classes and share study materials, organised by batch.</p>
         </div>
-        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${isLive ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
-          {isLive ? <Radio size={22} /> : <WifiOff size={21} />}
+        <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${liveCount ? 'bg-present/15 text-present ring-1 ring-present/35' : 'glass text-white/75'}`} aria-hidden="true">
+          {liveCount ? <Radio size={22} /> : <WifiOff size={21} />}
         </div>
       </div>
 
@@ -370,7 +509,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       )}
 
       {/* Batch selector — everything below is tagged with this exact batch name. */}
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
+      <div className={card}>
         <label className="block">
           <span className={label}>Batch Name</span>
           <select aria-label="Batch Name" className={field} value={effectiveBatch} onChange={(e) => setSelectedBatch(e.target.value)}>
@@ -378,96 +517,181 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </select>
         </label>
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-white/55">
-          <Folder size={13} /> Live classes, folders and notes for <strong className="text-white/80">{effectiveBatch}</strong> only.
+          <Folder size={13} /> New meetings, folders and notes are tagged <strong className="text-white/80">{effectiveBatch}</strong>.
         </p>
       </div>
 
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
-        <div className="flex items-center gap-2">
-          <span className="lens grid h-10 w-10 place-items-center rounded-2xl"><Video size={19} /></span>
-          <div>
-            <h2 className="font-display text-[19px] font-semibold">Live Meeting Control</h2>
-            <p className="text-[12px] text-white/60">{isLive ? 'Live now · Student Hub can join' : 'Currently offline'}</p>
+      {/* ---------------------------------------------------------------- schedule a class */}
+      <div className={card}>
+        <div className={stack}>
+          <span className="lens grid h-10 w-10 place-items-center rounded-xl"><Video size={19} /></span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-[19px] font-semibold">{editingId ? 'Edit meeting' : 'Schedule a class'}</h2>
+            <p className="text-[12px] text-white/60">
+              {liveCount ? `${liveCount} live now` : 'One class at a time or many ahead of time — your call.'}
+            </p>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isLive}
-            aria-label="Live class status"
-            disabled={busy}
-            onClick={() => { void saveMeeting(!isLive) }}
-            className={`glass-btn relative z-10 ml-auto flex h-9 w-16 items-center rounded-full p-1 ring-1 ${isLive ? 'justify-end bg-present/20 ring-present/45' : 'justify-start bg-black/35 ring-white/15'}`}
-          >
-            <span className={`block h-7 w-7 rounded-full ${isLive ? 'bg-present' : 'bg-white/70'}`} />
-          </button>
         </div>
 
-        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); void saveMeeting(isLive) }}>
-          <label>
-            <span className={label}>Class topic / title</span>
-            <input className={field} value={topic} maxLength={140} placeholder="e.g. Physics — Gravitation" onChange={(e) => setTopic(e.target.value)} />
-          </label>
-          <label>
-            <span className={label}>Meeting URL</span>
-            <input className={field} value={meetingUrl} maxLength={2000} inputMode="url" placeholder="https://meet.google.com/…" onChange={(e) => setMeetingUrl(e.target.value)} />
+        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); void saveMeeting(scheduledIso) }}>
+          <label className="block min-w-0">
+            <span className={label}>Class title</span>
+            <input className={field} value={meetingFormTitle} maxLength={140} placeholder="e.g. Physics — Gravitation" onChange={(e) => setMeetingFormTitle(e.target.value)} />
           </label>
 
-          {/* Meeting Duration: quick presets + custom minutes. expires_at = now() + duration_minutes. */}
-          <div>
-            <span className={label}>Meeting Duration</span>
-            <div className="flex flex-wrap gap-2" aria-label="Meeting duration">
-              {MEETING_DURATION_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  aria-pressed={duration === preset}
-                  onClick={() => { setDuration(preset); setCustomDuration('') }}
-                  className={`${chip} ${duration === preset ? 'lens' : 'bg-white/8 text-white/70'}`}
-                >
-                  <Clock3 size={14} /> {preset} mins
-                </button>
-              ))}
-            </div>
-            <label className="mt-2 block">
-              <span className="sr-only">Custom duration in minutes</span>
+          <label className="block min-w-0">
+            <span className={label}>Meeting link</span>
+            <input className={field} value={meetingFormUrl} maxLength={2000} inputMode="url" placeholder="https://meet.google.com/…" onChange={(e) => setMeetingFormUrl(e.target.value)} />
+          </label>
+
+          {/* Proper native date + clock picker with a Start Now shortcut. */}
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block min-w-[220px] flex-1">
+              <span className={label}>Start date &amp; time</span>
               <input
+                type="datetime-local"
+                aria-label="Start date and time"
                 className={field}
-                type="number"
-                min={MIN_DURATION_MINUTES}
-                max={MAX_DURATION_MINUTES}
-                aria-label="Custom duration in minutes"
-                value={customDuration}
-                placeholder={`Custom minutes (${MIN_DURATION_MINUTES}–${MAX_DURATION_MINUTES})`}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setCustomDuration(value)
-                  if (value.trim()) setDuration(normaliseDuration(Number(value)))
-                }}
+                value={startLocal}
+                onChange={(e) => setStartLocal(e.target.value)}
               />
             </label>
-            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-white/50">
-              <Timer size={13} /> Duration: {duration} Mins · a new class ends at {formatWhen(endsAt)} (saved as duration_minutes + expires_at).
+            <button
+              type="button"
+              className={smallAction}
+              disabled={busy}
+              onClick={() => setStartLocal(toLocalInputValue(new Date()))}
+            >
+              <CalendarClock size={14} /> Start Now
+            </button>
+          </div>
+
+          {/* Duration: value + Minutes/Hours toggle. Hours are converted to minutes before saving. */}
+          <div>
+            <span className={label}>Duration</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                step={durationUnit === 'hours' ? '0.25' : '1'}
+                min={durationUnit === 'hours' ? 0.25 : MIN_DURATION_MINUTES}
+                max={durationUnit === 'hours' ? 8 : MAX_DURATION_MINUTES}
+                aria-label={`Duration in ${durationUnit}`}
+                className={`${field} w-28 flex-none`}
+                value={durationValue}
+                onChange={(e) => setDurationValue(e.target.value)}
+              />
+              <div className="inline-flex flex-wrap rounded-xl bg-black/35 p-1" role="group" aria-label="Duration unit">
+                {(['minutes', 'hours'] as const).map((unit) => (
+                  <button
+                    key={unit}
+                    type="button"
+                    aria-pressed={durationUnit === unit}
+                    onClick={() => setDurationUnit(unit)}
+                    className={`glass-btn inline-flex h-8 items-center rounded-lg px-3 text-[12px] font-semibold capitalize ${durationUnit === unit ? 'lens text-white' : 'text-white/60'}`}
+                  >
+                    {unit}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2" aria-label="Duration presets">
+                {MEETING_DURATION_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    aria-pressed={durationMinutes === preset && durationUnit === 'minutes'}
+                    onClick={() => { setDurationUnit('minutes'); setDurationValue(String(preset)) }}
+                    className={`${chip} ${durationMinutes === preset && durationUnit === 'minutes' ? 'lens' : 'bg-white/8 text-white/70'}`}
+                  >
+                    <Clock3 size={14} /> {preset}m
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-white/50">
+              <Timer size={13} /> Saves as {durationMinutes} minutes · shows as “{formatDurationLabel(durationMinutes)}”
+              {scheduledIso ? ` · ends ${formatWhen(new Date(new Date(scheduledIso).getTime() + durationMinutes * 60_000).toISOString())}` : ''}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button type="submit" disabled={busy} className={action}>
-              {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} Save class details
+              {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editingId ? 'Save changes' : 'Schedule class'}
             </button>
-            <span className="text-[12px] text-white/55">{meeting?.updated_at ? `Last saved ${formatWhen(meeting.updated_at)}` : 'Not saved yet'}</span>
+            <button type="button" disabled={busy} className={smallAction} onClick={() => { void startNow() }}>
+              <PlayCircle size={15} /> Go live now
+            </button>
+            {editingId && (
+              <button type="button" className={smallAction} onClick={resetMeetingForm}>
+                Cancel edit
+              </button>
+            )}
           </div>
-          {liveNow && meeting && (
-            <p className="flex items-center gap-1.5 text-[12px] text-present">
-              <Radio size={13} /> Live for {effectiveBatch} · {meeting.duration_minutes} Mins{meeting.expires_at ? ` · ends ${formatWhen(meeting.expires_at)}` : ''}
-            </p>
-          )}
         </form>
       </div>
 
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
-        <div className="flex items-start gap-3">
-          <span className="lens grid h-10 w-10 shrink-0 place-items-center rounded-2xl"><Copy size={18} /></span>
-          <div className="min-w-0">
+      {/* ---------------------------------------------------------------- scheduled & live list */}
+      <div className={card}>
+        <div className={stack}>
+          <span className="lens grid h-10 w-10 place-items-center rounded-xl"><CalendarClock size={19} /></span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-[19px] font-semibold">Scheduled &amp; live meetings</h2>
+            <p className="text-[12px] text-white/60">Every batch, newest schedule first.</p>
+          </div>
+          <span className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-white/65">{sortedMeetings.length}</span>
+        </div>
+
+        {sortedMeetings.length === 0 ? (
+          <div className="mt-4 rounded-2xl border border-dashed border-white/15 px-4 py-6 text-center text-[13px] text-white/55">
+            No meetings yet. Schedule one above or tap “Go live now”.
+          </div>
+        ) : (
+          <ul className="mt-4 space-y-2.5">
+            {sortedMeetings.map((meeting) => {
+              const stateNow = meetingState(meeting, now)
+              const when = relativeStart(meeting, now)
+              const rowKey = meeting.id || `${meeting.batch_name}-${meeting.scheduled_start}`
+              return (
+                <li key={rowKey} className="relative z-10 rounded-2xl border border-white/10 bg-black/25 p-3.5">
+                  <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${STATUS_STYLE[stateNow]}`}>{STATUS_LABEL[stateNow]}</span>
+                        <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-white/65">{meeting.batch_name || effectiveBatch}</span>
+                        <span className="text-[10px] text-white/45">{formatDurationLabel(meeting.duration_minutes)}</span>
+                      </div>
+                      <p className="mt-1.5 break-words text-[14px] font-semibold">{meetingTitle(meeting)}</p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-white/60">
+                        <span className="inline-flex items-center gap-1"><Clock3 size={12} /> {formatWhen(meeting.scheduled_start)}{formatClock(meeting.scheduled_start) ? ` · ${formatClock(meeting.scheduled_start)}` : ''}</span>
+                        {when && <span className="text-sky-200/80">starts {when}</span>}
+                        {stateNow === 'live' && meeting.expires_at && <span className="text-present">ends {formatWhen(meeting.expires_at)}</span>}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" className={smallAction} onClick={() => editMeeting(meeting)}>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingId === meeting.id}
+                        aria-label={`Delete ${meetingTitle(meeting)}`}
+                        onClick={() => confirmRemoveMeeting(meeting)}
+                        className="glass glass-btn relative z-10 grid h-9 w-9 place-items-center rounded-xl text-white/70 disabled:opacity-40"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className={card}>
+        <div className="flex flex-wrap items-start gap-3">
+          <span className="lens grid h-10 w-10 shrink-0 place-items-center rounded-xl"><Copy size={18} /></span>
+          <div className="min-w-0 flex-1">
             <h2 className="font-display text-[19px] font-semibold">Student Hub Link</h2>
             <p className="mt-0.5 text-[12px] text-white/65">Share this read-only page with your students.</p>
             <code className="mt-2 block truncate rounded-xl bg-black/30 px-3 py-2 text-[12px] text-white/80">{studentHubUrl()}</code>
@@ -478,10 +702,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         </button>
       </div>
 
-      <div className="glass glass-deep relative z-10 rounded-[30px] p-5">
-        <div className="flex items-center gap-2">
-          <span className="lens grid h-10 w-10 place-items-center rounded-2xl"><BookOpen size={19} /></span>
-          <div>
+      <div className={card}>
+        <div className={stack}>
+          <span className="lens grid h-10 w-10 place-items-center rounded-xl"><BookOpen size={19} /></span>
+          <div className="min-w-0">
             <h2 className="font-display text-[19px] font-semibold">Upload &amp; Manage Notes</h2>
             <p className="text-[12px] text-white/60">Files, PDFs, links, or quick text notes for {effectiveBatch}.</p>
           </div>
@@ -489,7 +713,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
         {/* Folders are always batch-tagged; notes inherit the same batch automatically. */}
         <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3.5">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-display text-[15px] font-semibold">Folders for {effectiveBatch}</h3>
             <span className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-white/65">{folders.length}</span>
           </div>
@@ -531,7 +755,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         <form className="mt-4 space-y-3" onSubmit={(e) => { void addNote(e) }}>
           <div>
             <span className={label}>Material type</span>
-            <div className="grid grid-cols-3 gap-1 rounded-full bg-black/35 p-1" aria-label="Material type">
+            <div className="grid grid-cols-3 gap-1 rounded-xl bg-black/35 p-1" aria-label="Material type">
               {([
                 ['file', 'File / PDF', FileText],
                 ['link', 'Link', Link2],
@@ -542,7 +766,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   type="button"
                   onClick={() => { setKind(id); setFile(null); setBody(''); if (fileInput.current) fileInput.current.value = '' }}
                   aria-pressed={kind === id}
-                  className={`glass-btn relative z-10 flex h-10 items-center justify-center gap-1.5 rounded-full px-2 text-[12px] font-semibold ${kind === id ? 'lens text-white' : 'text-white/65'}`}
+                  className={`glass-btn relative z-10 flex h-10 flex-wrap items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold ${kind === id ? 'lens text-white' : 'text-white/65'}`}
                 >
                   <Icon size={15} /> {text}
                 </button>
@@ -551,17 +775,17 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </div>
 
           <div className="grid gap-3 min-[420px]:grid-cols-2">
-            <label>
+            <label className="min-w-0">
               <span className={label}>Title</span>
               <input className={field} value={title} maxLength={160} placeholder="Chapter 4 — Gravitation" onChange={(e) => setTitle(e.target.value)} />
             </label>
-            <label>
+            <label className="min-w-0">
               <span className={label}>Subject tag</span>
               <input className={field} value={subject} maxLength={80} placeholder="Physics" onChange={(e) => setSubject(e.target.value)} />
             </label>
           </div>
 
-          <label>
+          <label className="block min-w-0">
             <span className={label}>Folder / group (optional)</span>
             <input className={field} list="hub-folder-options" aria-label="Folder / group" maxLength={120} value={folderName} placeholder="e.g. Unit 1 — Mechanics" onChange={(e) => setFolderName(e.target.value)} />
             <datalist id="hub-folder-options">
@@ -571,26 +795,26 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </label>
 
           {kind === 'file' && (
-            <label>
+            <label className="block min-w-0">
               <span className={label}>Choose a file or PDF</span>
               <input
                 ref={fileInput}
                 type="file"
                 aria-label="Choose a file or PDF"
-                className={`${field} file:mr-3 file:rounded-full file:border-0 file:bg-white/15 file:px-3 file:py-1.5 file:text-white`}
+                className={`${field} file:mr-3 file:rounded-lg file:border-0 file:bg-white/15 file:px-3 file:py-1.5 file:text-white`}
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
               <span className="mt-1 block text-[11px] text-white/45">Up to 15 MB. Stored in your private teacher folder in Supabase Storage.</span>
             </label>
           )}
           {kind === 'link' && (
-            <label>
+            <label className="block min-w-0">
               <span className={label}>Study link</span>
               <input className={field} value={body} maxLength={2000} inputMode="url" placeholder="https://…" onChange={(e) => setBody(e.target.value)} />
             </label>
           )}
           {kind === 'text' && (
-            <label>
+            <label className="block min-w-0">
               <span className={label}>Text note</span>
               <textarea className={`${field} min-h-28 resize-y`} value={body} maxLength={20000} placeholder="Key formulas, homework, or a quick reminder…" onChange={(e) => setBody(e.target.value)} />
             </label>
@@ -602,7 +826,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         </form>
 
         <div className="mt-5 border-t border-white/10 pt-4">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-display text-[17px] font-semibold">Previously uploaded</h3>
             <span className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-white/65">{notes.length}</span>
           </div>
@@ -627,7 +851,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                     const filePending = note.kind === 'file' && Boolean(note.file_path) && !href
                     return (
                       <article key={note.id} className="glass no-blur rounded-2xl p-3.5">
-                        <div className="relative z-10 flex items-start gap-2">
+                        <div className="relative z-10 flex flex-wrap items-start gap-2">
                           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/8 text-white/75">
                             {note.kind === 'file' ? <FileText size={17} /> : note.kind === 'link' ? <Link2 size={17} /> : <BookOpen size={17} />}
                           </span>
@@ -652,25 +876,26 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                             disabled={deletingId === note.id}
                             onClick={() => confirmRemove(note)}
                             aria-label={`Delete ${note.title}`}
-                            className="glass glass-btn relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/70 disabled:opacity-40"
+                            className="glass glass-btn relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white/70 disabled:opacity-40"
                           >
                             <Trash2 size={16} />
                           </button>
                         </div>
-                        {(href || downloadHref) && (
-                          <div className="relative z-10 mt-3 flex flex-wrap gap-2">
-                            {href && (
-                              <a href={href} target="_blank" rel="noopener noreferrer" className="glass-btn inline-flex h-9 items-center gap-1.5 rounded-full bg-white/8 px-3 text-[12px] font-semibold">
-                                <ExternalLink size={14} /> Open
-                              </a>
-                            )}
-                            {downloadHref && (
-                              <a href={downloadHref} download={note.file_name ?? undefined} className="glass-btn inline-flex h-9 items-center gap-1.5 rounded-full bg-white/8 px-3 text-[12px] font-semibold">
-                                <Upload size={14} className="rotate-180" /> Download
-                              </a>
-                            )}
-                          </div>
-                        )}
+                        <div className="relative z-10 mt-3 flex flex-wrap gap-2">
+                          {href && (
+                            <a href={href} target="_blank" rel="noopener noreferrer" className={smallAction}>
+                              <ExternalLink size={14} /> Open
+                            </a>
+                          )}
+                          {downloadHref && (
+                            <a href={downloadHref} download={note.file_name ?? undefined} className={smallAction}>
+                              <Upload size={14} className="rotate-180" /> Download
+                            </a>
+                          )}
+                          <button type="button" className={smallAction} onClick={() => { void copyNoteLink(note) }}>
+                            <Link2 size={14} /> Copy link
+                          </button>
+                        </div>
                       </article>
                     )
                   })}
@@ -679,6 +904,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             </div>
           )}
         </div>
+
+        <p className="mt-4 flex flex-wrap items-center gap-1.5 text-[11px] text-white/40">
+          <Users size={12} /> Students open notes at <code className="rounded bg-black/30 px-1.5 py-0.5">{`${studentHubUrl()}?note=<id>`}</code>
+        </p>
       </div>
     </motion.section>
   )
