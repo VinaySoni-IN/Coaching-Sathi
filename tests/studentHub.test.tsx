@@ -230,15 +230,25 @@ describe('Student Hub Manager (SH)', () => {
     await waitFor(() => expect(fakeNotesFor('t1')).toHaveLength(0))
     expect(fakeStorageFileCount()).toBe(0)
   })
+
+  it('SH-13 gives the Start Now and Go live now shortcuts the animated gradient treatment', async () => {
+    await openHub()
+    expect(screen.getByRole('button', { name: /Start Now/ }).className).toContain('gradient-live')
+    expect(screen.getByRole('button', { name: /Go live now/ }).className).toContain('gradient-live')
+    const css = read('src/index.css')
+    expect(css).toContain('@keyframes gradient-drift')
+    expect(css).toContain('.gradient-live')
+    expect(css).toMatch(/prefers-reduced-motion[\s\S]{0,120}\.gradient-live/)
+  })
 })
 
 describe('Student Portal and RLS (SP)', () => {
   it('SP-01 is a single-page, relative-path portal with read-only Supabase reads and teacher-only writes', () => {
     const html = read('student-hub/index.html')
     expect(html).toContain('Live Meeting / Class Preview')
-    expect(html).toMatch(/href="\.\/styles\.css"/)
+    expect(html).toMatch(/href="\.\/styles\.css(?:\?v=\d+)?"/)
     expect(html).toMatch(/src="\.\/vendor\/supabase\.js"/)
-    expect(html).toMatch(/src="\.\/portal\.js"/)
+    expect(html).toMatch(/src="\.\/portal\.js(?:\?v=\d+)?"/)
     expect(html).not.toMatch(/<nav\b/i)
     expect(html).not.toMatch(/(?:src|href)="\//)
     expect(html).toContain('Notes &amp; study materials')
@@ -285,7 +295,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(html).not.toMatch(/<nav\b/i)
 
     const portal = read('student-hub/portal.js')
-    expect(portal).toContain("from './sanitize.js'")
+    expect(portal).toMatch(/from '\.\/sanitize\.js(?:\?v=\d+)?'/)
     expect(portal).toContain("name: 'student_name'")
     expect(portal).toContain("batch: 'selected_batch'")
     expect(portal).toContain("teacher: 'selected_teacher_id'")
@@ -388,5 +398,31 @@ describe('Student Portal and RLS (SP)', () => {
     expect(manager).toContain('Copy link')
     expect(manager).toContain('signedNoteUrl')
     expect(read('src/App.tsx')).toContain('batches={state.batches.map')
+  })
+  it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
+    const html = read('student-hub/index.html')
+    expect(html).not.toContain('Supabase, filtered')
+    expect(html).toContain('Live status and class notes shared by your teacher')
+    expect(html).toContain('class="footer-brand"')
+    expect(html).toMatch(/styles\.css\?v=\d+/)
+    expect(html).toMatch(/portal\.js\?v=\d+/)
+
+    const portal = read('student-hub/portal.js')
+    // The build-config instruction must never reach a student's screen.
+    expect(portal).not.toContain('Add the public URL and anon key')
+    expect(portal).toContain('Student Hub is not available on this site yet')
+    // "Choose a teacher" is an instruction, not a re-selectable value.
+    expect(portal).toContain('placeholder.disabled = true')
+    expect(portal).toContain("state.teachers.length ? 'Choose a teacher' : 'No teacher yet'")
+    // A network failure is reported as a network failure, never as "no batches".
+    expect(portal).toContain('We could not load your batches just now.')
+    expect(portal).toContain("state.directoryError = friendlyError(error)")
+    expect(portal).not.toContain('then refresh the page')
+
+    const css = read('student-hub/styles.css')
+    expect(css).toMatch(/\.search-icon\s*\{[^}]*right:\s*13px/)
+    expect(css).toMatch(/\.search-field input\s*\{[^}]*padding:\s*0 38px 0 14px/)
+    expect(css).toMatch(/\.switch-wrap select:disabled/)
+    expect(css).toMatch(/\.footer\s*\{[^}]*flex-direction:\s*column/)
   })
 })

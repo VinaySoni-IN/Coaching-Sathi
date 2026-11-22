@@ -78,6 +78,7 @@ const field = 'w-full min-w-0 rounded-xl border border-white/15 bg-black/25 px-4
 const label = 'mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-white/70'
 const action = 'lens glass-btn relative z-10 inline-flex h-11 flex-wrap items-center justify-center gap-2 rounded-xl px-5 text-[14px] font-semibold disabled:opacity-40'
 const smallAction = 'glass-btn inline-flex h-9 flex-wrap items-center justify-center gap-1.5 rounded-xl bg-white/8 px-3 text-[12px] font-semibold text-white/85 hover:bg-white/14 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40'
+const liveAction = 'gradient-live relative z-10 inline-flex h-9 flex-wrap items-center justify-center gap-1.5 rounded-full px-3.5 text-[12px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
 const chip = 'glass-btn relative z-10 inline-flex h-9 flex-wrap items-center gap-1.5 rounded-xl px-3 text-[12px] font-semibold'
 const card = 'glass glass-deep relative z-10 rounded-3xl p-5 sm:p-6'
 const stack = 'flex flex-wrap items-center gap-3'
@@ -564,7 +565,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             </label>
             <button
               type="button"
-              className={smallAction}
+              className={liveAction}
               disabled={busy}
               onClick={() => setStartLocal(toLocalInputValue(new Date()))}
             >
@@ -623,7 +624,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             <button type="submit" disabled={busy} className={action}>
               {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editingId ? 'Save changes' : 'Schedule class'}
             </button>
-            <button type="button" disabled={busy} className={smallAction} onClick={() => { void startNow() }}>
+            <button type="button" disabled={busy} className={liveAction} onClick={() => { void startNow() }}>
               <PlayCircle size={15} /> Go live now
             </button>
             {editingId && (

@@ -1,4 +1,4 @@
-/* Coaching Sathi Student Hub — read-only, single-page portal (v2: batches, folders, durations).
+/* Coaching Sathi Student Hub — read-only, single-page portal (v3: batches, folders, durations, scheduled meetings, ?note= links).
    The Teacher App owns every write. This page uses an anonymous Supabase client, SELECTs and one
    read-only snapshot RPC. It never calls INSERT/UPDATE/DELETE/RPC-write and only ever uses the
    public anon key — no privileged key is present in this static bundle.
@@ -10,7 +10,7 @@
 import {
   cleanBody, cleanLine, escapeHtml, formatClock, formatDurationLabel, formatRemaining,
   formatStartsIn, initials, safeHttpUrl,
-} from './sanitize.js'
+} from './sanitize.js?v=4'
 
 const CONFIG_URL = './config.json'
 const STORAGE_BUCKET = 'student_notes'
@@ -67,6 +67,7 @@ const state = {
   subject: 'all',
   kind: 'all',
   error: '',
+  directoryError: '',
   loading: false,
   loadedOnce: false,
 }
@@ -218,18 +219,28 @@ function renderTopbar() {
   els.studentGreeting.textContent = state.studentName ? `Hi, ${state.studentName}` : 'Student Hub'
   els.batchPill.textContent = state.batch ? `Batch: ${state.batch}` : 'Choose a batch'
   els.teacherSwitch.replaceChildren()
-  const placeholder = document.createElement('option')
-  placeholder.value = ''
-  placeholder.textContent = 'Choose a teacher'
-  els.teacherSwitch.append(placeholder)
+  const chosen = state.teachers.find((teacher) => teacher.id === state.teacherId)
+  // The placeholder is only an instruction: once a teacher exists it is disabled, so tapping the
+  // control can never leave the hub in a "no teacher" state.
+  if (!chosen) {
+    const placeholder = document.createElement('option')
+    placeholder.value = ''
+    placeholder.textContent = state.teachers.length ? 'Choose a teacher' : 'No teacher yet'
+    placeholder.disabled = true
+    placeholder.selected = true
+    els.teacherSwitch.append(placeholder)
+  }
   state.teachers.forEach((teacher) => {
     const option = document.createElement('option')
     option.value = teacher.id
     option.textContent = teacher.name
     els.teacherSwitch.append(option)
   })
-  els.teacherSwitch.value = state.teacherId || ''
-  els.teacherSwitch.disabled = state.teachers.length === 0
+  els.teacherSwitch.value = chosen ? chosen.id : ''
+  const noTeachers = state.teachers.length === 0
+  els.teacherSwitch.disabled = noTeachers
+  els.teacherSwitch.setAttribute('aria-disabled', String(noTeachers))
+  els.teacherSwitch.title = noTeachers ? 'No teacher is listed for this batch yet' : 'Switch teacher'
 }
 
 function showOnboardingError(message, allowRetry = false) {
@@ -261,8 +272,11 @@ function showOnboarding() {
   els.batchSelect.disabled = state.batches.length === 0
   els.studentName.value = state.studentName
   clearOnboardingError()
-  if (!state.batches.length) {
-    showOnboardingError('No batches are available yet. Ask your teacher to share notes or start a class, then refresh.', true)
+  if (state.directoryError) {
+    // A failed request is not the teacher's fault — offer the same friendly retry, say why.
+    showOnboardingError('We could not load your batches just now. Check your connection and try again.', true)
+  } else if (!state.batches.length) {
+    showOnboardingError('No batches are listed yet. Ask your teacher to add your batch, then tap Refresh.', true)
   }
   els.onboarding.hidden = false
   try { els.studentName.focus() } catch { /* not focusable in some environments */ }
@@ -296,7 +310,7 @@ function renderTeacherPicker() {
   els.teacherPickerSub.textContent = `Teachers for ${state.batch} · ${state.teachers.length} available`
   els.teacherList.replaceChildren()
   if (!state.teachers.length) {
-    const empty = elem('div', 'glass empty-card', `No teachers have published anything for ${state.batch} yet. Ask your teacher to share a note or start a class, then refresh the page.`)
+    const empty = elem('div', 'glass empty-card', `No teachers are listed for ${state.batch} yet. Ask your teacher to share a note or start a class, then check back in a moment.`)
     els.teacherList.append(empty)
     els.teacherPicker.hidden = false
     return
@@ -323,7 +337,11 @@ function chooseTeacher(id) {
   els.teacherPicker.hidden = true
   renderTopbar()
   state.loadedOnce = false
-  void loadAll()
+  void loadAll().then(() => {
+    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+      showToast('That note is not available for your batch and teacher.')
+    }
+  })
 }
 
 function changeProfile() {
@@ -337,6 +355,13 @@ function changeProfile() {
   state.folders = []
   state.notes = []
   state.loadedOnce = false
+  state.query = ''
+  state.subject = 'all'
+  state.kind = 'all'
+  state.deepLinkNote = ''
+  if (els.search) els.search.value = ''
+  if (els.subjectFilter) els.subjectFilter.value = 'all'
+  if (els.kindFilter) els.kindFilter.value = 'all'
   renderTopbar()
   renderLive()
   renderNotes()
@@ -867,10 +892,12 @@ function bindControls() {
     void (async () => {
       try {
         await loadDirectory()
+        state.directoryError = ''
         showOnboarding()
         showToast('Batch list refreshed')
       } catch (error) {
-        showOnboardingError(friendlyError(error), true)
+        state.directoryError = friendlyError(error)
+        showOnboardingError(state.directoryError, true)
       }
     })()
   })
@@ -880,7 +907,8 @@ async function start() {
   const createClient = globalThis.supabase && globalThis.supabase.createClient
   const config = await readConfig()
   if (typeof createClient !== 'function' || !config.url || !config.key) {
-    renderFatal('This build has no Supabase project configured. Add the public URL and anon key to student-hub/config.json.')
+    console.warn('[student-hub] Missing supabaseUrl / supabaseAnonKey in config.json')
+    renderFatal('Student Hub is not available on this site yet. Please check back later.')
     return
   }
   state.config = config
@@ -905,8 +933,10 @@ async function start() {
 
   try {
     await loadDirectory()
+    state.directoryError = ''
   } catch (error) {
-    state.error = friendlyError(error)
+    state.directoryError = friendlyError(error)
+    state.error = state.directoryError
     renderError()
   }
   const profile = readProfile()
@@ -918,6 +948,10 @@ async function start() {
 
   if (!profile.name || !profile.batch || !state.batches.includes(profile.batch)) {
     showOnboarding()
+    // A saved batch that no longer exists is different from "nothing published yet".
+    if (!state.directoryError && profile.batch && state.batches.length && !state.batches.includes(profile.batch)) {
+      showOnboardingError('Your saved batch is not listed any more. Please choose it again.')
+    }
   } else if (!profile.teacher || !state.teachers.some((teacher) => teacher.id === profile.teacher)) {
     renderTeacherPicker()
   } else {
