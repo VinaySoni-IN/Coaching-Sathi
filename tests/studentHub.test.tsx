@@ -240,6 +240,27 @@ describe('Student Hub Manager (SH)', () => {
     expect(css).toContain('.gradient-live')
     expect(css).toMatch(/prefers-reduced-motion[\s\S]{0,120}\.gradient-live/)
   })
+
+  it('SH-14 applies the 24px/16px/pill geometry and keeps the Start row on one line', async () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    // Soft cards: 24px radius, hairline white/8 border, 20px padding.
+    expect(manager).toContain("rounded-[24px] border border-white/8 p-5")
+    // Fields: 48px tall, 16px radius, 16px side padding, white/25 focus border.
+    expect(manager).toMatch(/const field = '[^']*h-12[^']*rounded-2xl[^']*px-4[^']*focus:border-white\/25/)
+    // Primary CTA: full-width 50px pill.
+    expect(manager).toMatch(/const primaryCta = '[^']*h-\[50px\][^']*w-full[^']*rounded-full/)
+    // Gradient shortcut: 48px, 18px side padding, never wrapped.
+    expect(manager).toMatch(/const liveAction = '[^']*h-12[^']*whitespace-nowrap[^']*rounded-full[^']*px-\[18px\]/)
+    // Card padding guard for 320-380px screens.
+    expect(read('src/index.css')).toMatch(/@media \(max-width: 380px\)[\s\S]{0,80}\.hub-card/)
+
+    await openHub()
+    const start = screen.getByLabelText('Start date and time')
+    expect(start.className).toContain('rounded-2xl')
+    expect(start.className).toContain('min-w-0')
+    expect(start.parentElement?.className).toContain('flex-nowrap')
+    expect(screen.getByRole('button', { name: /Start Now/ }).className).toContain('px-[18px]')
+  })
 })
 
 describe('Student Portal and RLS (SP)', () => {
