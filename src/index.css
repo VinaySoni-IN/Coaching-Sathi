@@ -130,3 +130,9 @@ body { text-rendering: optimizeSpeed; }
 /* The floating bottom nav is 66px tall: when the browser scrolls a focused field into view, keep it
    clear of the nav instead of hiding it underneath. */
 html { scroll-padding-bottom: 112px; }
+
+/* Very narrow phones (320–380px): the Hub cards keep their 24px radius but trim the horizontal
+   padding so the date field, the Start Now pill and the duration switcher always sit on one row. */
+@media (max-width: 380px) {
+  .hub-card { padding: 16px; }
+}

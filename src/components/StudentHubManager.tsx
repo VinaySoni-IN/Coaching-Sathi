@@ -88,9 +88,9 @@ const action = 'lens glass-btn relative z-10 inline-flex h-11 min-w-0 flex-wrap 
 const primaryCta = 'lens glass-btn relative z-10 flex h-[50px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-semibold disabled:opacity-40'
 const smallAction = 'glass-btn inline-flex h-9 min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full bg-white/8 px-4 text-[12px] font-semibold text-white/85 hover:bg-white/14 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40'
 // Gradient live shortcut: 48px tall so it sits level with the date field beside it.
-const liveAction = 'gradient-live relative z-10 inline-flex h-12 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 text-[13px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
+const liveAction = 'gradient-live relative z-10 inline-flex h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-[18px] text-[12.5px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
 const chip = 'glass-btn relative z-10 inline-flex h-9 min-w-0 flex-wrap items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold'
-const card = 'glass glass-deep relative z-10 box-border rounded-[24px] border border-white/8 p-5'
+const card = 'hub-card glass glass-deep relative z-10 box-border rounded-[24px] border border-white/8 p-5'
 const stack = 'flex flex-wrap items-center gap-3'
 // Segmented control shell + its active pill.
 const segmentShell = 'inline-flex shrink-0 items-center rounded-full bg-black/35 p-1'
@@ -567,11 +567,11 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           {/* Start date & time and the Start Now shortcut share one aligned 48px row. */}
           <div>
             <span className={label}>Start date &amp; time</span>
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex flex-nowrap items-center gap-2.5">
               <input
                 type="datetime-local"
                 aria-label="Start date and time"
-                className={`${field} min-w-[152px] flex-1 text-[13.5px]`}
+                className={`${field} min-w-0 flex-1 px-3.5 text-[13px]`}
                 value={startLocal}
                 onChange={(e) => setStartLocal(e.target.value)}
               />
