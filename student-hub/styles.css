@@ -682,3 +682,38 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   .note-actions { gap: 8px; }
   .note-actions .action-btn { flex: 1 1 auto; }
 }
+
+/* ------------------------------------------------------------------------------------------------
+   v4 — live-card rhythm and soft-card geometry.
+   The LIVE NOW card is a single 16px stack: details, then the Join pill. Nothing stretches, so no
+   blank void appears between the class details and the button on tall screens.
+   ------------------------------------------------------------------------------------------------ */
+.live-content { display: grid; gap: 16px; margin-top: 16px; }
+.live-card { border-radius: 24px; }
+.live-session {
+  align-items: flex-start;
+  gap: 16px;
+  row-gap: 12px;
+  padding: 18px;
+  border-radius: 24px;
+}
+.live-session-main { display: grid; align-content: start; gap: 6px; }
+.live-session-main .live-badges { margin-bottom: 0; }
+.live-session-main .live-meta { margin-top: 0; }
+.live-topic { font-size: 21px; line-height: 1.2; }
+.join-btn, .join-btn.is-disabled { align-self: center; }
+
+.note-card, .folder-group, .toolbar, .materials, .teacher-picker, .onboarding-card { border-radius: 24px; }
+.note-card { border-radius: 20px; }
+.toolbar { border-radius: 24px; }
+
+@media (max-width: 640px) {
+  .live-session { padding: 16px; border-radius: 22px; }
+  .meeting-card { flex-direction: column; align-items: stretch; gap: 14px; }
+  .meeting-card .join-btn,
+  .meeting-card .join-btn.is-disabled {
+    width: 100%;
+    align-self: stretch;
+    margin-top: 2px;
+  }
+}

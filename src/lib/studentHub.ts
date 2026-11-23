@@ -169,7 +169,9 @@ export function startsInMs(meeting: LiveMeeting | null, now = Date.now()): numbe
 }
 
 export function meetingTitle(meeting: LiveMeeting | null): string {
-  return cleanLine(meeting?.meeting_title || meeting?.topic, 140) || 'Live class'
+  const title = cleanLine(meeting?.meeting_title || meeting?.topic, 140)
+  // A class started without a custom title still reads well for students.
+  return !title || /^live class$/i.test(title) ? 'Live Class Session' : title
 }
 
 /** Deep link a student can open directly: .../student-hub/?note=<note_id> */

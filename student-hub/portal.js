@@ -10,7 +10,7 @@
 import {
   cleanBody, cleanLine, escapeHtml, formatClock, formatDurationLabel, formatRemaining,
   formatStartsIn, initials, safeHttpUrl,
-} from './sanitize.js?v=4'
+} from './sanitize.js?v=5'
 
 const CONFIG_URL = './config.json'
 const STORAGE_BUCKET = 'student_notes'
@@ -403,7 +403,9 @@ function visibleMeetings(now = Date.now()) {
 }
 
 function meetingHeading(row) {
-  return cleanLine(row.meeting_title || row.topic, 140) || 'Live class'
+  const title = cleanLine(row.meeting_title || row.topic, 140)
+  // Titles are optional when a teacher goes live: fall back to a proper class label, not a form name.
+  return !title || /^live class$/i.test(title) ? 'Live Class Session' : title
 }
 
 function updateRemaining(expiry) {
