@@ -424,5 +424,11 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).toMatch(/\.search-field input\s*\{[^}]*padding:\s*0 38px 0 14px/)
     expect(css).toMatch(/\.switch-wrap select:disabled/)
     expect(css).toMatch(/\.footer\s*\{[^}]*flex-direction:\s*column/)
+
+    // v4 geometry: the live card is one 16px stack and a title-less class still reads well.
+    expect(css).toMatch(/\.live-content\s*\{[^}]*gap:\s*16px/)
+    expect(css).toMatch(/\.live-session\s*\{[^}]*border-radius:\s*24px/)
+    expect(portal).toContain('Live Class Session')
+    expect(read('src/lib/studentHub.ts')).toContain("'Live Class Session'")
   })
 })
