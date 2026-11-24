@@ -15,6 +15,7 @@ import {
   GraduationCap,
   Link2,
   Loader2,
+  Minus,
   PlayCircle,
   Radio,
   Timer,
@@ -57,6 +58,8 @@ import {
   noteShareUrl,
   safeHttpUrl,
   saveMyMeeting,
+  setHubStudentAccess,
+  syncHubStudents,
   signedNoteUrl,
   startsInMs,
   studentHubUrl,
@@ -213,6 +216,45 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+
+  /* Who may open the portal. The roster is republished on every batch change so the student's name
+     picker always matches this list; the allowed flag survives a re-sync. */
+  const [access, setAccess] = useState<Record<string, boolean>>({})
+  // Which batch the access map belongs to. Derived, so the effect never sets state synchronously
+  // and a stale map can never be shown as if it were this batch's.
+  const [accessFor, setAccessFor] = useState<string | null>(null)
+  const accessReady = accessFor === effectiveBatch
+  useEffect(() => {
+    let alive = true
+    void syncHubStudents(effectiveBatch, teacher.name, batchStudents.map((student) => ({ key: student.id, name: student.name })))
+      .then((rows) => {
+        if (!alive) return
+        setAccess(Object.fromEntries(rows.map((row) => [row.student_key, row.allowed])))
+        setAccessFor(effectiveBatch)
+      })
+      .catch((cause) => {
+        if (!alive) return
+        setAccessFor(effectiveBatch)
+        setError(cloudMessage(cause, 'Could not publish this batch\'s student list.'))
+      })
+    return () => { alive = false }
+  }, [effectiveBatch, teacher.name, batchStudents])
+  const allowedCount = batchStudents.filter((student) => access[student.id]).length
+
+  const flipAccess = (studentId: string, name: string) => {
+    const next = !access[studentId]
+    setAccess((prev) => ({ ...prev, [studentId]: next }))
+    void setHubStudentAccess(studentId, next)
+      .then((saved) => {
+        setAccess((prev) => ({ ...prev, [studentId]: saved }))
+        setStatus(`${name} ${saved ? 'can now open' : 'can no longer open'} the Student Hub.`)
+        setError(null)
+      })
+      .catch((cause: unknown) => {
+        setAccess((prev) => ({ ...prev, [studentId]: !next }))
+        setError(cloudMessage(cause, 'Could not change this student\'s access.'))
+      })
+  }
 
   const [kind, setKind] = useState<StudentNoteKind>('file')
   const [title, setTitle] = useState('')
@@ -624,26 +666,48 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
         })}
       </div>
 
-      {/* ------------------------------------------------------------------ who this batch is */}
+      {/* ------------------------------------------------------------------ who this batch is
+          The allow switch is the access control for the whole Hub: a name only appears in the
+          student's setup dialog once it is switched on here. */}
       <section aria-label={`Students in ${effectiveBatch}`} className="relative z-10 rounded-2xl border border-white/8 bg-white/[.03] px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-white/45">
             <Users size={13} className="shrink-0" />
             <span className="truncate">Students in {effectiveBatch}</span>
           </p>
-          <span className="shrink-0 rounded-full bg-white/6 px-2 py-0.5 text-[11px] font-semibold text-white/55 ring-1 ring-white/10" aria-label={`${batchStudents.length} students`}>
-            {batchStudents.length}
+          <span className="shrink-0 rounded-full bg-white/6 px-2 py-0.5 text-[11px] font-semibold text-white/55 ring-1 ring-white/10" aria-label={`${allowedCount} of ${batchStudents.length} allowed`}>
+            {batchStudents.length ? `${allowedCount}/${batchStudents.length} allowed` : '0'}
           </span>
         </div>
         {batchStudents.length ? (
-          <ul className="mt-2.5 flex flex-wrap gap-1.5">
-            {batchStudents.map((student) => (
-              <li key={student.id} className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-white/6 px-2.5 text-[12px] font-medium text-white/75 ring-1 ring-white/10">
-                <span className="truncate">{student.name}</span>
-                {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/35">#{student.roll}</span> : null}
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="mt-2.5 space-y-1.5">
+              {batchStudents.map((student) => {
+                const allowed = Boolean(access[student.id])
+                return (
+                  <li key={student.id}>
+                    <button
+                      type="button"
+                      aria-pressed={allowed}
+                      aria-label={`${student.name} access`}
+                      onClick={() => flipAccess(student.id, student.name)}
+                      className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors ${allowed ? 'bg-present/10 ring-1 ring-present/25' : 'bg-white/4 ring-1 ring-white/8 hover:bg-white/6'}`}
+                    >
+                      <span aria-hidden className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${allowed ? 'bg-present/25 text-present' : 'bg-white/8 text-white/35'}`}>
+                        {allowed ? <Check size={12} /> : <Minus size={12} />}
+                      </span>
+                      <span className={`min-w-0 flex-1 truncate text-[12.5px] font-medium ${allowed ? 'text-white' : 'text-white/60'}`}>{student.name}</span>
+                      <span className="shrink-0 text-[10.5px] tabular-nums text-white/30">{student.roll ? `#${student.roll}` : ''}</span>
+                      <span className={`shrink-0 text-[10px] font-bold uppercase tracking-[.08em] ${allowed ? 'text-present' : 'text-white/35'}`}>{allowed ? 'Allowed' : 'Off'}</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="mt-2 text-[11px] leading-snug text-white/35">
+              {accessReady ? 'Tap a name to let that student into the Student Hub.' : 'Publishing this roster…'}
+            </p>
+          </>
         ) : (
           <p className="mt-1.5 text-[12px] leading-snug text-white/40">
             No students in this batch yet. Add them on the Students tab — this is the list the class link gets shared with.

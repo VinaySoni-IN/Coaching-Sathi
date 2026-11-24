@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=7" />
+    <link rel="stylesheet" href="./styles.css?v=8" />
   </head>
   <body>
     <div class="ambient" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span></div>
@@ -99,18 +99,22 @@
       </footer>
     </main>
 
-    <!-- One-time onboarding: name, batch and teacher in a single dialog. Values are saved in
-         localStorage as student_name, selected_batch, selected_teacher_id. Future visits skip it. -->
+    <!-- One-time onboarding: batch, then the student's own name from the allowed list, plus the teacher
+         that list belongs to. Saved in localStorage as student_name (short form), student_key,
+         selected_batch, selected_teacher_id. Future visits skip it unless access was revoked. -->
     <div id="onboarding" class="onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" hidden>
       <div class="glass onboarding-card">
         <span class="brand-mark" aria-hidden="true">CS</span>
         <p class="eyebrow">Welcome to Coaching Sathi</p>
         <h2 id="onboarding-title">Let's set up your hub</h2>
-        <p class="onboarding-sub">Your name, your batch and your teacher — one screen, then straight into class. Saved on this device only, no account or password.</p>
+        <p class="onboarding-sub">Pick your batch, then your name from the list your teacher allowed. One screen, then straight into class — saved on this device only.</p>
         <form id="onboarding-form" novalidate>
           <label class="form-field">
-            <span>Full Name</span>
-            <input id="student-name" type="text" autocomplete="name" maxlength="80" placeholder="e.g. Aarav Sharma" required />
+            <span>Your name</span>
+            <!-- Only the short name ("Vinay S.") of a student the teacher has allowed ever appears here. -->
+            <select id="student-select" aria-label="Your name" required disabled>
+              <option value="">Choose your batch first</option>
+            </select>
           </label>
           <label class="form-field">
             <span>Batch</span>
@@ -137,6 +141,6 @@
 
     <!-- Relative paths only: works from /student-hub/ on GitHub Pages and from dist/student-hub/ on Vercel. -->
     <script src="./vendor/supabase.js"></script>
-    <script type="module" src="./portal.js?v=6"></script>
+    <script type="module" src="./portal.js?v=7"></script>
   </body>
 </html>

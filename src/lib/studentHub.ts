@@ -9,6 +9,24 @@ import { formatClock, readClock } from './clock'
 export { cleanBody, cleanLine, safeHttpUrl } from './sanitize'
 
 export const STUDENT_HUB_PATH = './student-hub/'
+/** "Vinay Soni" -> "Vinay S." The portal only ever shows this short form of a name. */
+export function shortStudentName(fullName: string): string {
+  const parts = cleanLine(fullName, 120).split(/\s+/).filter(Boolean)
+  if (!parts.length) return ''
+  // Only the leading letter is touched: "de Souza" must survive as it was typed.
+  const first = `${parts[0].charAt(0).toUpperCase()}${parts[0].slice(1)}`
+  if (parts.length === 1) return first
+  const last = parts[parts.length - 1]
+  // An initial is all the portal is allowed to reveal of the surname.
+  return `${first} ${last.charAt(0).toUpperCase()}.`
+}
+
+/** One row of the access list the class roster projects into Supabase. */
+export interface HubStudentAccess {
+  student_key: string
+  short_name: string
+  allowed: boolean
+}
 export const STUDENT_NOTES_BUCKET = 'student_notes'
 export const MAX_NOTE_FILE_SIZE = 15 * 1024 * 1024
 export const DEFAULT_BATCH_NAME = 'General'
@@ -301,6 +319,42 @@ export async function saveMyMeeting(input: MeetingInput): Promise<LiveMeeting> {
   if (error) throw error
   if (!data) throw new Error('The meeting could not be saved. Try again.')
   return data as LiveMeeting
+}
+
+/** Publishes this batch's roster so the portal can offer real names, and returns their access state. */
+export async function syncHubStudents(
+  batchName: string,
+  teacherName: string,
+  students: { key: string; name: string }[],
+): Promise<HubStudentAccess[]> {
+  const batch = cleanLine(batchName, 80)
+  if (!batch) return []
+  const payload = students
+    .map((student) => ({ key: cleanLine(student.key, 64), short: shortStudentName(student.name) }))
+    .filter((student) => student.key && student.short)
+  const { data, error } = await sb().rpc('sync_my_hub_students', {
+    p_batch_name: batch,
+    p_teacher_name: cleanLine(teacherName, 120),
+    p_students: payload,
+  })
+  if (error) throw error
+  return ((data ?? []) as HubStudentAccess[]).map((row) => ({
+    student_key: row.student_key,
+    short_name: row.short_name,
+    allowed: Boolean(row.allowed),
+  }))
+}
+
+/** The teacher's allow switch. Returns the state the row ended up in. */
+export async function setHubStudentAccess(studentKey: string, allowed: boolean): Promise<boolean> {
+  const key = cleanLine(studentKey, 64)
+  if (!key) throw new Error('Choose a student first.')
+  const { data, error } = await sb().rpc('set_my_hub_student_access', {
+    p_student_key: key,
+    p_allowed: allowed,
+  })
+  if (error) throw error
+  return Boolean(data)
 }
 
 export async function deleteMeeting(meetingId: string): Promise<void> {
