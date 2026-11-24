@@ -231,35 +231,40 @@ describe('Student Hub Manager (SH)', () => {
     expect(fakeStorageFileCount()).toBe(0)
   })
 
-  it('SH-13 gives the Start Now and Go live now shortcuts the animated gradient treatment', async () => {
+  it('SH-13 keeps exactly one gradient live action and makes the date shortcut a quiet ghost', async () => {
     await openHub()
-    expect(screen.getByRole('button', { name: /Start Now/ }).className).toContain('gradient-live')
+    // "Go live now" publishes; the picker shortcut only changes the field. Two gradient buttons
+    // doing different jobs is what confuses a first-time teacher.
     expect(screen.getByRole('button', { name: /Go live now/ }).className).toContain('gradient-live')
+    const setNow = screen.getByRole('button', { name: /Set to now/ })
+    expect(setNow.className).not.toContain('gradient-live')
+    expect(setNow.className).toContain('w-full')
     const css = read('src/index.css')
     expect(css).toContain('@keyframes gradient-drift')
     expect(css).toContain('.gradient-live')
     expect(css).toMatch(/prefers-reduced-motion[\s\S]{0,120}\.gradient-live/)
   })
 
-  it('SH-14 applies the 24px/16px/pill geometry and keeps the Start row on one line', async () => {
+  it('SH-14 applies the 24px/16px geometry and gives the start field its own full row', async () => {
     const manager = read('src/components/StudentHubManager.tsx')
     // Soft cards: 24px radius, hairline white/8 border, 20px padding.
     expect(manager).toContain("rounded-[24px] border border-white/8 p-5")
     // Fields: 48px tall, 16px radius, 16px side padding, white/25 focus border.
     expect(manager).toMatch(/const field = '[^']*h-12[^']*rounded-2xl[^']*px-4[^']*focus:border-white\/25/)
-    // Primary CTA: full-width 50px pill.
-    expect(manager).toMatch(/const primaryCta = '[^']*h-\[50px\][^']*w-full[^']*rounded-full/)
-    // Gradient shortcut: 48px, 18px side padding, never wrapped.
-    expect(manager).toMatch(/const liveAction = '[^']*h-12[^']*whitespace-nowrap[^']*rounded-full[^']*px-\[18px\]/)
+    // Primary CTA: full-width 56px pill.
+    expect(manager).toMatch(/const primaryCta = '[^']*h-\[56px\][^']*w-full[^']*rounded-full/)
+    // Live action: 48px, never wrapped.
+    expect(manager).toMatch(/const liveAction = '[^']*h-12[^']*whitespace-nowrap[^']*rounded-full/)
     // Card padding guard for 320-380px screens.
     expect(read('src/index.css')).toMatch(/@media \(max-width: 380px\)[\s\S]{0,80}\.hub-card/)
 
     await openHub()
+    // The date field is no longer squeezed beside a pill: full width, shortcut underneath.
     const start = screen.getByLabelText('Start date and time')
     expect(start.className).toContain('rounded-2xl')
-    expect(start.className).toContain('min-w-0')
-    expect(start.parentElement?.className).toContain('flex-nowrap')
-    expect(screen.getByRole('button', { name: /Start Now/ }).className).toContain('px-[18px]')
+    expect(start.className).toContain('w-full')
+    expect(start.className).not.toContain('flex-1')
+    expect(screen.getByRole('button', { name: /Set to now/ }).className).toContain('h-12')
   })
 
   it('SH-15 converts the duration value when the unit switches', async () => {
@@ -363,14 +368,38 @@ describe('Student Hub Manager (SH)', () => {
     expect(screen.getByText('Add a file or PDF')).toBeTruthy()
   })
 
-  it('SH-23 uses one large gradient pill for both live actions', () => {
+  it('SH-23 keeps one gradient live action at a single large size', () => {
     const manager = read('src/components/StudentHubManager.tsx')
     // A second, smaller gradient token is how "Go live now" drifted away from "Start Now".
     expect(manager).not.toContain('const livePill')
     expect(manager.match(/gradient-live relative/g)?.length).toBe(1)
-    expect(manager.match(/className=\{liveAction\}/g)?.length).toBe(2)
+    // One gradient call site now: the header's "Go live now". The date shortcut is a ghost.
+    expect(manager.match(/className=\{liveAction\}/g)?.length).toBe(1)
     // Both are 48px: the header pill matches the Start Now pill and the fields beside it.
     expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
+  })
+
+  it('SH-24 keeps fields at 16px and every tap target thumb-sized', async () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    // iOS Safari zooms the page when a focused field is under 16px, which makes the form feel
+    // broken on a phone: every text field must be 16px.
+    for (const token of ['field', 'fieldDate', 'fieldCompact', 'textField']) {
+      const match = manager.match(new RegExp(`const ${token} = '([^']*)'`))
+      expect(match?.[1]).toContain('text-[16px]')
+    }
+    // Ghost row actions, batch pills, delete buttons and block buttons are >= 44px targets.
+    expect(manager).toMatch(/const smallAction = '[^']*h-11 /)
+    expect(manager).toMatch(/const chip = '[^']*h-11 /)
+    expect(manager).toMatch(/const blockAction = '[^']*h-12 /)
+    expect(manager).not.toMatch(/grid h-8 w-8/)
+    expect(manager).not.toMatch(/grid h-7 w-7 shrink-0 place-items-center rounded-full text-white\/30/)
+    // The primary call to action grew from 50 to 56px with 15.5px text.
+    expect(manager).toMatch(/const primaryCta = '[^']*h-\[56px\][^']*text-\[15\.5px\]/)
+
+    await openHub()
+    expect(screen.getByLabelText('Start date and time').className).toContain('text-[16px]')
+    expect(screen.getByLabelText('Class title').className).toContain('text-[16px]')
+    expect(screen.getByRole('button', { name: /Add to Student Hub/ }).className).toContain('h-[56px]')
   })
 
   it('SH-22 keeps every material-type label on one line beside its icon', async () => {
@@ -384,7 +413,7 @@ describe('Student Hub Manager (SH)', () => {
       expect(btn.querySelector('svg')?.getAttribute('class') ?? '').toContain('shrink-0')
     }
     // Three pills in a 320px card leave ~80px each: 10.5px text is what fits without clipping.
-    expect(read('src/components/StudentHubManager.tsx')).toContain('whitespace-nowrap text-[10.5px] font-semibold">{text}')
+    expect(read('src/components/StudentHubManager.tsx')).toContain('whitespace-nowrap text-[11.5px] font-semibold">{text}')
   })
 
   it('SH-21 attaches a dropped file and refuses one over the 15 MB cap', async () => {
@@ -555,7 +584,7 @@ describe('Student Portal and RLS (SP)', () => {
     const manager = read('src/components/StudentHubManager.tsx')
     expect(manager).toContain('Scheduled &amp; live meetings')
     expect(manager).toContain('type="datetime-local"')
-    expect(manager).toContain('Start Now')
+    expect(manager).toContain('Go live now')
     expect(manager).toContain('LIVE NOW')
     expect(manager).toContain('SCHEDULED')
     expect(manager).toContain('Copy link')

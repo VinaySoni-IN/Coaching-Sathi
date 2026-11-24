@@ -82,27 +82,26 @@ interface Props {
    Tailwind emits .h-8 < .h-9 < .h-10 < .h-11 < .h-12, so `field h-10` silently renders 48px and
    rows drift out of alignment. One variant per control size instead. ---- */
 const card = 'hub-card relative z-10 rounded-[24px] border border-white/8 p-5'
-const field = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-4 text-[15px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
-const fieldDate = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-3.5 text-[13px] font-medium text-white outline-none transition-colors focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
-const fieldCompact = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-3.5 text-[13.5px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
-const textField = 'box-border min-h-28 w-full min-w-0 resize-y rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-[15px] leading-relaxed text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
-const label = 'mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[.14em] text-white/40'
+const field = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-4 text-[16px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
+const fieldDate = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-4 text-[16px] font-medium text-white outline-none transition-colors focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
+const fieldCompact = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-4 text-[16px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
+const textField = 'box-border min-h-32 w-full min-w-0 resize-y rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-[16px] leading-relaxed text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
+const label = 'mb-2 block text-[11.5px] font-semibold uppercase tracking-[.12em] text-white/45'
 // Primary CTA: centred, full-width 50px pill.
-const primaryCta = 'lens glass-btn relative z-10 flex h-[50px] w-full items-center justify-center gap-2 rounded-full text-[14.5px] font-semibold disabled:opacity-40'
+const primaryCta = 'lens glass-btn relative z-10 flex h-[56px] w-full items-center justify-center gap-2 rounded-full text-[15.5px] font-semibold disabled:opacity-40'
 // Gradient shortcuts: 48px beside the date field, 36px inside a section header.
-// One gradient pill, one size: both live actions (header + Start Now) use this, so they never
-// read as two different weights of the same button.
-const liveAction = 'gradient-live relative z-10 inline-flex h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-[18px] text-[12.5px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
-// Ghost family: one size per use — row (32px), tall (36px), form row (48px), block (44px).
-const smallAction = 'glass-btn inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-3 text-[11.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
-const smallActionTall = 'glass-btn inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-3.5 text-[11.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
-const formAction = 'glass-btn inline-flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[12px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
-const blockAction = 'glass-btn inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[12px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
-const chip = 'glass-btn relative z-10 inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[11.5px] font-semibold'
+// One gradient pill, one size. It marks the single live action in the composer; the date
+// shortcut below the field is a ghost button so the two can never be confused.
+const liveAction = 'gradient-live relative z-10 inline-flex h-12 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 text-[13px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
+// Ghost family: one size per use — row (44px tap target), form row (48px), block (48px full width).
+const smallAction = 'glass-btn inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[12.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
+const formAction = 'glass-btn inline-flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[13px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
+const blockAction = 'glass-btn inline-flex h-12 w-full items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[13px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
+const chip = 'glass-btn relative z-10 inline-flex h-11 items-center gap-2 rounded-full px-4 text-[12.5px] font-semibold'
 // Segmented pill: 4px shell + 40px pill = 48px, exactly the height of the field beside it.
 const segmentShell = 'inline-flex shrink-0 items-center rounded-full bg-black/40 p-1'
-const segmentPill = 'h-10 rounded-full px-3.5 text-[11.5px] font-semibold capitalize transition-colors'
-const iconTile = 'grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/6 text-white/60'
+const segmentPill = 'h-10 rounded-full px-4 text-[12.5px] font-semibold capitalize transition-colors'
+const iconTile = 'grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/6 text-white/60'
 
 /** Default start = the next quarter hour, so a class scheduled without touching the picker is not
     instantly in the past (which used to publish an already-expired meeting). */
@@ -334,7 +333,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     // A brand-new class that would already be over is almost always a mis-tap on the date field.
     const startMs = start ? Date.parse(start) : Date.now()
     if (!editingId && Number.isFinite(startMs) && startMs + durationMinutes * 60_000 <= Date.now()) {
-      setError('That start time has already passed. Pick a later time, or tap Start Now to go live.')
+      setError('That start time has already passed. Pick a later time, or tap Go live now.')
       return
     }
     setBusy(true)
@@ -590,7 +589,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
               type="button"
               aria-pressed={active}
               onClick={() => setSelectedBatch(name)}
-              className={`glass-btn h-8 shrink-0 rounded-full px-3.5 text-[11.5px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 ${active ? 'bg-white text-[#0b0b0c]' : 'bg-white/6 text-white/55 ring-1 ring-white/10 hover:text-white/85'}`}
+              className={`glass-btn h-11 shrink-0 rounded-full px-4 text-[12.5px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 ${active ? 'bg-white text-[#0b0b0c]' : 'bg-white/6 text-white/55 ring-1 ring-white/10 hover:text-white/85'}`}
             >
               <span className="relative z-10">{name}</span>
             </button>
@@ -631,18 +630,17 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
           <div>
             <span className={label}>Start date &amp; time</span>
-            <div className="flex flex-nowrap items-center gap-2.5">
-              <input
-                type="datetime-local"
-                aria-label="Start date and time"
-                className={`${fieldDate} min-w-0 flex-1`}
-                value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
-              />
-              <button type="button" className={liveAction} disabled={busy} onClick={() => setStartLocal(toLocalInputValue(new Date()))}>
-                <CalendarClock size={15} /> Start Now
-              </button>
-            </div>
+            <input
+              type="datetime-local"
+              aria-label="Start date and time"
+              className={fieldDate}
+              value={startLocal}
+              onChange={(e) => setStartLocal(e.target.value)}
+            />
+            {/* Only changes the field — so it must not look or read like "Go live now". */}
+            <button type="button" className={`${blockAction} mt-2.5`} disabled={busy} onClick={() => setStartLocal(toLocalInputValue(new Date()))}>
+              <CalendarClock size={16} /> Set to now
+            </button>
           </div>
 
           <div>
@@ -750,9 +748,9 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                         disabled={deletingId === meeting.id}
                         aria-label={`Delete ${meetingTitle(meeting)}`}
                         onClick={() => confirmRemoveMeeting(meeting)}
-                        className="glass-btn grid h-8 w-8 place-items-center rounded-full bg-white/5 text-white/40 hover:bg-absent/15 hover:text-red-200 disabled:opacity-40"
+                        className="glass-btn grid h-11 w-11 place-items-center rounded-full bg-white/5 text-white/40 hover:bg-absent/15 hover:text-red-200 disabled:opacity-40"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
@@ -771,8 +769,8 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             <h2 id="hub-share" className="font-display text-[15px] font-semibold leading-tight">Student Hub link</h2>
             <p className="mt-0.5 truncate text-[11px] text-white/35">{studentHubUrl()}</p>
           </div>
-          <button type="button" aria-label="Copy Student Hub Link" onClick={() => { void copyLink() }} className={smallActionTall}>
-            <Copy size={13} /> Copy
+          <button type="button" aria-label="Copy Student Hub Link" onClick={() => { void copyLink() }} className={smallAction}>
+            <Copy size={15} /> Copy
           </button>
         </div>
       </section>
@@ -804,9 +802,9 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                     aria-label={`Delete folder ${folder.name}`}
                     disabled={deletingId === folder.id}
                     onClick={() => confirmRemoveFolder(folder)}
-                    className="grid h-5 w-5 place-items-center rounded-full text-white/35 hover:text-red-200 disabled:opacity-40"
+                    className="grid h-7 w-7 place-items-center rounded-full text-white/35 hover:text-red-200 disabled:opacity-40"
                   >
-                    <Trash2 size={11} />
+                    <Trash2 size={13} />
                   </button>
                 </span>
               ))}
@@ -844,8 +842,8 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   aria-pressed={kind === id}
                   className={`glass-btn relative z-10 flex h-10 items-center justify-center gap-1 overflow-hidden rounded-full px-1 leading-none ${kind === id ? 'lens text-white' : 'text-white/45 hover:text-white/75'}`}
                 >
-                  <Icon size={12} className="shrink-0" />
-                  <span className="whitespace-nowrap text-[10.5px] font-semibold">{text}</span>
+                  <Icon size={13} className="shrink-0" />
+                  <span className="whitespace-nowrap text-[11.5px] font-semibold">{text}</span>
                 </button>
               ))}
             </div>
@@ -897,17 +895,17 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                         <FileText size={16} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-semibold text-white">{file.name}</span>
-                        <span className="mt-0.5 block truncate text-[11px] text-white/40">{formatBytes(file.size)} · tap to change</span>
+                        <span className="block truncate text-[14px] font-semibold text-white">{file.name}</span>
+                        <span className="mt-0.5 block truncate text-[11.5px] text-white/40">{formatBytes(file.size)} · tap to change</span>
                       </span>
                     </label>
                     <button
                       type="button"
                       aria-label="Remove chosen file"
                       onClick={clearFile}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+                      className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/5 text-white/45 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
                     >
-                      <X size={14} />
+                      <X size={16} />
                     </button>
                   </div>
                 ) : (
@@ -916,8 +914,8 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                       <UploadCloud size={17} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold text-white">Add a file or PDF</span>
-                      <span className="mt-0.5 block truncate text-[11px] text-white/40">
+                      <span className="block text-[14px] font-semibold text-white">Add a file or PDF</span>
+                      <span className="mt-0.5 block truncate text-[11.5px] text-white/40">
                         {dragging ? 'Drop to attach' : 'Tap to browse · or drop it here'}
                       </span>
                     </span>
@@ -995,16 +993,16 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                               <div className="mt-2 flex flex-wrap gap-1.5">
                                 {href && (
                                   <a href={href} target="_blank" rel="noopener noreferrer" className={smallAction}>
-                                    <ExternalLink size={12} /> Open
+                                    <ExternalLink size={14} /> Open
                                   </a>
                                 )}
                                 {downloadHref && (
                                   <a href={downloadHref} download={note.file_name ?? undefined} className={smallAction}>
-                                    <Upload size={12} className="rotate-180" /> Download
+                                    <Upload size={14} className="rotate-180" /> Download
                                   </a>
                                 )}
                                 <button type="button" className={smallAction} onClick={() => { void copyNoteLink(note) }}>
-                                  <Link2 size={12} /> Copy link
+                                  <Link2 size={14} /> Copy link
                                 </button>
                               </div>
                             </div>
@@ -1013,9 +1011,9 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                               disabled={deletingId === note.id}
                               onClick={() => confirmRemove(note)}
                               aria-label={`Delete ${note.title}`}
-                              className="glass-btn mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/30 hover:bg-absent/15 hover:text-red-200 disabled:opacity-40"
+                              className="glass-btn grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/5 text-white/40 hover:bg-absent/15 hover:text-red-200 disabled:opacity-40"
                             >
-                              <Trash2 size={13} />
+                              <Trash2 size={16} />
                             </button>
                           </div>
                         </li>
