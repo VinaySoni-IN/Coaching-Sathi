@@ -11,14 +11,20 @@ export const STUDENT_HUB_PATH = './student-hub/'
 export const STUDENT_NOTES_BUCKET = 'student_notes'
 export const MAX_NOTE_FILE_SIZE = 15 * 1024 * 1024
 export const DEFAULT_BATCH_NAME = 'General'
-export const DEFAULT_DURATION_MINUTES = 45
+export const DEFAULT_DURATION_MINUTES = 60
 export const MIN_DURATION_MINUTES = 1
 export const MAX_DURATION_MINUTES = 480
-export const MEETING_DURATION_PRESETS = [30, 45, 60] as const
-/** Same control, expressed in the unit the teacher is typing in. Values are always minutes. */
+/**
+ * Six quick lengths per unit, always stored in minutes.
+ * Minutes keep whole-minute steps (30 / 45 / 60 / 90 / 120 / 150).
+ * Hours only ever offer clean halves — 1, 1.5, 2, 2.5, 3, 4 — because "0.75 h" is a number
+ * nobody says out loud.
+ */
+export const MEETING_DURATION_PRESETS = [30, 45, 60, 90, 120, 150] as const
+export const MEETING_DURATION_PRESETS_HOURS = [60, 90, 120, 150, 180, 240] as const
 export const MEETING_DURATION_PRESETS_BY_UNIT: Record<DurationUnit, readonly number[]> = {
   minutes: MEETING_DURATION_PRESETS,
-  hours: [60, 90, 120],
+  hours: MEETING_DURATION_PRESETS_HOURS,
 }
 export const UNFILED_FOLDER = 'Unfiled'
 /** A teacher can schedule this far ahead; the RPC enforces the same bound. */
