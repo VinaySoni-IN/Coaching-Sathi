@@ -99,6 +99,10 @@ const smallAction = 'glass-btn inline-flex h-11 shrink-0 items-center justify-ce
 const formAction = 'glass-btn inline-flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[13px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
 const blockAction = 'glass-btn inline-flex h-12 w-full items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[13px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
 const chip = 'glass-btn relative z-10 inline-flex h-11 items-center gap-2 rounded-full px-4 text-[12.5px] font-semibold'
+// Seven duration slabs must fit a 320px card in two rows, so they carry a tighter gutter than
+// the other chips. tabular-nums keeps 1 / 1.5 / 2.5 from shifting width as the selection moves.
+const durationChip =
+  'glass-btn relative z-10 inline-flex h-11 min-w-[3.25rem] items-center justify-center rounded-full px-3 text-[12.5px] font-semibold tabular-nums'
 // Segmented pill: 4px shell + 40px pill = 48px, exactly the height of the field beside it.
 const segmentShell = 'inline-flex shrink-0 items-center rounded-full bg-black/40 p-1'
 const segmentPill = 'h-10 rounded-full px-4 text-[12.5px] font-semibold capitalize transition-colors'
@@ -680,7 +684,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   aria-pressed={durationMinutes === preset}
                   // Keep the unit the teacher chose: a preset is the same length either way.
                   onClick={() => setDurationValue(durationUnit === 'hours' ? String(preset / 60) : String(preset))}
-                  className={`${chip} ${durationMinutes === preset ? 'lens text-white' : 'bg-white/5 text-white/45 hover:text-white/75'}`}
+                  className={`${durationChip} ${durationMinutes === preset ? 'lens text-white' : 'bg-white/5 text-white/45 hover:text-white/75'}`}
                 >
                   {durationUnit === 'hours' ? `${preset / 60}h` : `${preset}m`}
                 </button>

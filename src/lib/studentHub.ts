@@ -15,13 +15,13 @@ export const DEFAULT_DURATION_MINUTES = 60
 export const MIN_DURATION_MINUTES = 1
 export const MAX_DURATION_MINUTES = 480
 /**
- * Six quick lengths per unit, always stored in minutes.
- * Minutes keep whole-minute steps (30 / 45 / 60 / 90 / 120 / 150).
- * Hours only ever offer clean halves — 1, 1.5, 2, 2.5, 3, 4 — because "0.75 h" is a number
- * nobody says out loud.
+ * Seven quick lengths per unit, always stored in minutes.
+ * Both ladders, both ending at the same four hours.
+ * Minutes: 30 / 45 / 60 / 90 / 120 / 180 / 240 — keeps the two short taps for doubt sessions.
+ * Hours: 1 / 1.5 / 2 / 2.5 / 3 / 3.5 / 4 — every half hour, no "0.75 h", no gap at 3.5.
  */
-export const MEETING_DURATION_PRESETS = [30, 45, 60, 90, 120, 150] as const
-export const MEETING_DURATION_PRESETS_HOURS = [60, 90, 120, 150, 180, 240] as const
+export const MEETING_DURATION_PRESETS = [30, 45, 60, 90, 120, 180, 240] as const
+export const MEETING_DURATION_PRESETS_HOURS = [60, 90, 120, 150, 180, 210, 240] as const
 export const MEETING_DURATION_PRESETS_BY_UNIT: Record<DurationUnit, readonly number[]> = {
   minutes: MEETING_DURATION_PRESETS,
   hours: MEETING_DURATION_PRESETS_HOURS,
