@@ -363,6 +363,20 @@ describe('Student Hub Manager (SH)', () => {
     expect(screen.getByText('Add a file or PDF')).toBeTruthy()
   })
 
+  it('SH-22 keeps every material-type label on one line beside its icon', async () => {
+    await openHub()
+    for (const name of ['File / PDF', 'Link', 'Text note']) {
+      const btn = screen.getByRole('button', { name })
+      // Icon and label share a row: never stacked (flex-col), never wrapped.
+      expect(btn.className).toContain('items-center')
+      expect(btn.className).not.toContain('flex-col')
+      expect(btn.querySelector('span')?.className).toContain('whitespace-nowrap')
+      expect(btn.querySelector('svg')?.getAttribute('class') ?? '').toContain('shrink-0')
+    }
+    // Three pills in a 320px card leave ~80px each: 10.5px text is what fits without clipping.
+    expect(read('src/components/StudentHubManager.tsx')).toContain('whitespace-nowrap text-[10.5px] font-semibold">{text}')
+  })
+
   it('SH-21 attaches a dropped file and refuses one over the 15 MB cap', async () => {
     await openHub()
     const zone = screen.getByTestId('hub-file-drop')
