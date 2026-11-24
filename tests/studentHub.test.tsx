@@ -658,6 +658,32 @@ describe('Student Portal and RLS (SP)', () => {
     expect(manager).toContain('signedNoteUrl')
     expect(read('src/App.tsx')).toContain('batches={state.batches.map')
   })
+  it('SP-05 keeps the onboarding card on one left edge with its own padding', () => {
+    const css = read('student-hub/styles.css')
+    const html = read('student-hub/index.html')
+
+    // Three rules used to fight over this card and the generic dashboard ones won: a 46px tile
+    // ended up 14px from the corner with a 24px radius instead of the intended 20/26.
+    const lines = css.split('\n')
+    expect(lines.find((line) => line.includes('padding: clamp(14px, 2.4vw, 22px)')) ?? '').not.toContain('onboarding-card')
+    expect(lines.filter((line) => line.includes('border-radius: 24px')).join('\n')).not.toContain('onboarding-card')
+
+    // The card owns its padding and radius, and opts out of inherited centring.
+    const card = css.match(/\.onboarding-card \{([^}]*)\}/)
+    expect(card?.[1]).toContain('padding: 26px')
+    expect(card?.[1]).toContain('border-radius: 32px')
+    expect(card?.[1]).toContain('text-align: left')
+    expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]{0,4000}\.onboarding-card \{ padding: 20px; border-radius: 26px; \}/)
+
+    // Tile → eyebrow → title → sub share a rhythm instead of stacking three margins.
+    expect(css).toContain('.onboarding-card > .brand-mark { margin: 0 0 16px; }')
+    expect(css).toContain('.onboarding-card .eyebrow { margin: 0 0 6px; }')
+    expect(css).toContain('.onboarding-card h2 { margin: 0 0 10px; font-size: 27px; }')
+
+    // The stylesheet is cache-busted so the phone actually fetches the fix.
+    expect(html).toMatch(/styles\.css\?v=6/)
+  })
+
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
     const html = read('student-hub/index.html')
     expect(html).not.toContain('Supabase, filtered')
