@@ -486,8 +486,16 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   -webkit-backdrop-filter: blur(14px);
 }
 .onboarding[hidden], .teacher-picker[hidden], .form-error[hidden], #onboarding-retry[hidden] { display: none; }
-.onboarding-card { width: min(100%, 430px); padding: 26px; border-radius: 32px; }
-.onboarding-card h2 { margin: 8px 0; font-size: 27px; }
+.onboarding-card {
+  width: min(100%, 430px);
+  padding: 26px;
+  border-radius: 32px;
+  /* The tile, the eyebrow and the title must share one left edge and one rhythm. */
+  text-align: left;
+}
+.onboarding-card > .brand-mark { margin: 0 0 16px; }
+.onboarding-card .eyebrow { margin: 0 0 6px; }
+.onboarding-card h2 { margin: 0 0 10px; font-size: 27px; }
 .onboarding-sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .form-field { display: block; margin-bottom: 14px; }
 .form-field > span { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
@@ -672,7 +680,8 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .action-btn, .join-btn, .retry-btn { max-width: 100%; }
 .note-card, .folder-group, .live-session, .glass { overflow-wrap: anywhere; }
 
-.glass, .live-card, .materials, .folder-group, .note-card, .toolbar, .onboarding-card { padding: clamp(14px, 2.4vw, 22px); }
+/* .onboarding-card sets its own padding: the clamp below is for the dashboard cards. */
+.glass, .live-card, .materials, .folder-group, .note-card, .toolbar { padding: clamp(14px, 2.4vw, 22px); }
 .live-content { display: grid; gap: 12px; }
 .empty-card { padding: 22px; }
 
@@ -703,7 +712,7 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .live-topic { font-size: 21px; line-height: 1.2; }
 .join-btn, .join-btn.is-disabled { align-self: center; }
 
-.note-card, .folder-group, .toolbar, .materials, .teacher-picker, .onboarding-card { border-radius: 24px; }
+.note-card, .folder-group, .toolbar, .materials, .teacher-picker { border-radius: 24px; }
 .note-card { border-radius: 20px; }
 .toolbar { border-radius: 24px; }
 

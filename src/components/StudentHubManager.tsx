@@ -47,7 +47,8 @@ import {
   fromLocalInputValue,
   MAX_DURATION_MINUTES,
   MAX_NOTE_FILE_SIZE,
-  MEETING_DURATION_PRESETS,
+  MEETING_DURATION_PRESETS_BY_UNIT,
+  isDurationInputValid,
   meetingState,
   meetingTitle,
   MIN_DURATION_MINUTES,
@@ -216,6 +217,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
   const fileInput = useRef<HTMLInputElement | null>(null)
 
   const durationMinutes = toDurationMinutes(durationValue, durationUnit)
+  const durationValid = isDurationInputValid(durationValue)
 
   /** Switching unit keeps the same real duration: 45 min -> 0.75 h, 1.5 h -> 90 min. */
   const changeDurationUnit = (unit: DurationUnit) => {
@@ -671,22 +673,31 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Duration presets">
-              {MEETING_DURATION_PRESETS.map((preset) => (
+              {MEETING_DURATION_PRESETS_BY_UNIT[durationUnit].map((preset) => (
                 <button
                   key={preset}
                   type="button"
-                  aria-pressed={durationMinutes === preset && durationUnit === 'minutes'}
-                  onClick={() => { setDurationUnit('minutes'); setDurationValue(String(preset)) }}
-                  className={`${chip} ${durationMinutes === preset && durationUnit === 'minutes' ? 'lens text-white' : 'bg-white/5 text-white/45 hover:text-white/75'}`}
+                  aria-pressed={durationMinutes === preset}
+                  // Keep the unit the teacher chose: a preset is the same length either way.
+                  onClick={() => setDurationValue(durationUnit === 'hours' ? String(Math.round((preset / 60) * 100) / 100) : String(preset))}
+                  className={`${chip} ${durationMinutes === preset ? 'lens text-white' : 'bg-white/5 text-white/45 hover:text-white/75'}`}
                 >
-                  {preset}m
+                  {durationUnit === 'hours' ? `${Math.round((preset / 60) * 100) / 100}h` : `${preset}m`}
                 </button>
               ))}
             </div>
-            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[10.5px] text-white/30">
-              <Timer size={12} /> {durationMinutes} min · shows as “{formatDurationLabel(durationMinutes)}”
-              {scheduledIso ? ` · ends ${formatWhen(new Date(new Date(scheduledIso).getTime() + durationMinutes * 60_000).toISOString())}` : ''}
-            </p>
+            {durationValid ? (
+              <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[10.5px] text-white/30">
+                <Timer size={12} />
+                {durationUnit === 'hours' ? `${durationValue || 0} h · ${durationMinutes} min` : `${durationMinutes} min`}
+                {' '}· shows as “{formatDurationLabel(durationMinutes)}”
+                {scheduledIso ? ` · ends ${formatWhen(new Date(new Date(scheduledIso).getTime() + durationMinutes * 60_000).toISOString())}` : ''}
+              </p>
+            ) : (
+              <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-red-200/80">
+                <AlertCircle size={12} /> Enter a class length above zero.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2 pt-1">

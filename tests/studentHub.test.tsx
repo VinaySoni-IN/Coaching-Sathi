@@ -379,6 +379,49 @@ describe('Student Hub Manager (SH)', () => {
     expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
   })
 
+  it('SH-26 offers duration presets in whichever unit the teacher is typing', async () => {
+    await openHub()
+    // Minutes: 30m / 45m / 60m.
+    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '45m' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '60m' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'hours' }))
+    // The same control now speaks hours instead of offering "45m" in an hours field.
+    expect(screen.getByRole('button', { name: '1h' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '1.5h' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2h' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '45m' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '1.5h' }))
+    const hoursField = screen.getByLabelText('Duration in hours') as HTMLInputElement
+    expect(hoursField.value).toBe('1.5')
+    // A preset sets the value, never the unit: the field the teacher chose stays put.
+    expect(screen.getByRole('button', { name: 'hours' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: '1.5h' }).getAttribute('aria-pressed')).toBe('true')
+    // The helper names both units so 1.5 h and 90 min never look like different classes.
+    expect(screen.getByText(/1\.5 h · 90 min/)).toBeTruthy()
+    expect(screen.getByText(/1 Hr 30 Mins/)).toBeTruthy()
+
+    // Back in minutes the presets are minute presets again, still driving the same length.
+    fireEvent.click(screen.getByRole('button', { name: 'minutes' }))
+    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('90')
+    expect(screen.queryByRole('button', { name: '90m' })).toBeNull()
+    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
+  })
+
+  it('SH-27 never promises a duration the teacher did not type', async () => {
+    await openHub()
+    fireEvent.change(screen.getByLabelText('Duration in minutes'), { target: { value: '0' } })
+    // A zero used to fall back to 45 minutes and still read as a valid class.
+    expect(await screen.findByText(/Enter a class length above zero/)).toBeTruthy()
+    expect(screen.queryByText(/shows as “45 Mins”/)).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Duration in minutes'), { target: { value: '45' } })
+    expect(await screen.findByText(/shows as “45 Mins”/)).toBeTruthy()
+    expect(screen.queryByText(/above zero/)).toBeNull()
+  })
+
   it('SH-25 renders the Hub flat: hairlines only, no cast shadows', async () => {
     const manager = read('src/components/StudentHubManager.tsx')
     const css = read('src/index.css')
@@ -615,6 +658,32 @@ describe('Student Portal and RLS (SP)', () => {
     expect(manager).toContain('signedNoteUrl')
     expect(read('src/App.tsx')).toContain('batches={state.batches.map')
   })
+  it('SP-05 keeps the onboarding card on one left edge with its own padding', () => {
+    const css = read('student-hub/styles.css')
+    const html = read('student-hub/index.html')
+
+    // Three rules used to fight over this card and the generic dashboard ones won: a 46px tile
+    // ended up 14px from the corner with a 24px radius instead of the intended 20/26.
+    const lines = css.split('\n')
+    expect(lines.find((line) => line.includes('padding: clamp(14px, 2.4vw, 22px)')) ?? '').not.toContain('onboarding-card')
+    expect(lines.filter((line) => line.includes('border-radius: 24px')).join('\n')).not.toContain('onboarding-card')
+
+    // The card owns its padding and radius, and opts out of inherited centring.
+    const card = css.match(/\.onboarding-card \{([^}]*)\}/)
+    expect(card?.[1]).toContain('padding: 26px')
+    expect(card?.[1]).toContain('border-radius: 32px')
+    expect(card?.[1]).toContain('text-align: left')
+    expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]{0,4000}\.onboarding-card \{ padding: 20px; border-radius: 26px; \}/)
+
+    // Tile → eyebrow → title → sub share a rhythm instead of stacking three margins.
+    expect(css).toContain('.onboarding-card > .brand-mark { margin: 0 0 16px; }')
+    expect(css).toContain('.onboarding-card .eyebrow { margin: 0 0 6px; }')
+    expect(css).toContain('.onboarding-card h2 { margin: 0 0 10px; font-size: 27px; }')
+
+    // The stylesheet is cache-busted so the phone actually fetches the fix.
+    expect(html).toMatch(/styles\.css\?v=6/)
+  })
+
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
     const html = read('student-hub/index.html')
     expect(html).not.toContain('Supabase, filtered')

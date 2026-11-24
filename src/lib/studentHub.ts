@@ -15,6 +15,11 @@ export const DEFAULT_DURATION_MINUTES = 45
 export const MIN_DURATION_MINUTES = 1
 export const MAX_DURATION_MINUTES = 480
 export const MEETING_DURATION_PRESETS = [30, 45, 60] as const
+/** Same control, expressed in the unit the teacher is typing in. Values are always minutes. */
+export const MEETING_DURATION_PRESETS_BY_UNIT: Record<DurationUnit, readonly number[]> = {
+  minutes: MEETING_DURATION_PRESETS,
+  hours: [60, 90, 120],
+}
 export const UNFILED_FOLDER = 'Unfiled'
 /** A teacher can schedule this far ahead; the RPC enforces the same bound. */
 export const MAX_SCHEDULE_DAYS = 365
@@ -126,6 +131,12 @@ export function toDurationMinutes(value: number | string, unit: DurationUnit): n
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_DURATION_MINUTES
   return normaliseDuration(unit === 'hours' ? n * 60 : n)
+}
+
+/** True only for a value the teacher could actually mean: positive, finite, above zero. */
+export function isDurationInputValid(value: number | string): boolean {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0
 }
 
 /** "45 Mins" / "1 Hr 30 Mins" / "2 Hrs" — used by both apps. */
