@@ -679,10 +679,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   type="button"
                   aria-pressed={durationMinutes === preset}
                   // Keep the unit the teacher chose: a preset is the same length either way.
-                  onClick={() => setDurationValue(durationUnit === 'hours' ? String(Math.round((preset / 60) * 100) / 100) : String(preset))}
+                  onClick={() => setDurationValue(durationUnit === 'hours' ? String(preset / 60) : String(preset))}
                   className={`${chip} ${durationMinutes === preset ? 'lens text-white' : 'bg-white/5 text-white/45 hover:text-white/75'}`}
                 >
-                  {durationUnit === 'hours' ? `${Math.round((preset / 60) * 100) / 100}h` : `${preset}m`}
+                  {durationUnit === 'hours' ? `${preset / 60}h` : `${preset}m`}
                 </button>
               ))}
             </div>

@@ -73,7 +73,7 @@ describe('Student Hub Manager (SH)', () => {
     await waitFor(() => expect(fakeMeetingsFor('t1')).toHaveLength(1))
     expect(fakeMeetingFor('t1')?.meeting_url).toContain('meet.google.com')
     expect(fakeMeetingFor('t1')?.batch_name).toBe('NEET Biology')
-    expect(fakeMeetingFor('t1')?.duration_minutes).toBe(45)
+    expect(fakeMeetingFor('t1')?.duration_minutes).toBe(60)
     expect((await screen.findAllByText('SCHEDULED')).length).toBeGreaterThan(0)
   })
 
@@ -379,35 +379,42 @@ describe('Student Hub Manager (SH)', () => {
     expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
   })
 
-  it('SH-26 offers duration presets in whichever unit the teacher is typing', async () => {
+  it('SH-26 offers six slabs per unit, and hours only use clean halves', async () => {
     await openHub()
-    // Minutes: 30m / 45m / 60m.
-    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '45m' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '60m' })).toBeTruthy()
+    // One hour is the default class length, and it is a preset.
+    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('60')
+    expect(screen.getByText(/shows as “1 Hr”/)).toBeTruthy()
+
+    const minuteChips = ['30m', '45m', '60m', '90m', '120m', '150m']
+    for (const label of minuteChips) expect(screen.getByRole('button', { name: label })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '60m' }).getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(screen.getByRole('button', { name: 'hours' }))
-    // The same control now speaks hours instead of offering "45m" in an hours field.
-    expect(screen.getByRole('button', { name: '1h' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '1.5h' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '2h' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '45m' })).toBeNull()
+    // Six slabs in hours: 1, 1.5, 2, 2.5, 3, 4. No 0.25h / 0.75h — nobody says "zero point seven five".
+    const hourChips = ['1h', '1.5h', '2h', '2.5h', '3h', '4h']
+    for (const label of hourChips) expect(screen.getByRole('button', { name: label })).toBeTruthy()
+    for (const label of ['0.25h', '0.5h', '0.75h', '1.25h']) {
+      expect(screen.queryByRole('button', { name: label })).toBeNull()
+    }
+    for (const label of minuteChips) expect(screen.queryByRole('button', { name: label })).toBeNull()
+    // 60 min converted to 1 h, so the 1h slab carries the selection across the unit switch.
+    expect(screen.getByRole('button', { name: '1h' }).getAttribute('aria-pressed')).toBe('true')
 
-    fireEvent.click(screen.getByRole('button', { name: '1.5h' }))
+    fireEvent.click(screen.getByRole('button', { name: '2.5h' }))
     const hoursField = screen.getByLabelText('Duration in hours') as HTMLInputElement
-    expect(hoursField.value).toBe('1.5')
+    expect(hoursField.value).toBe('2.5')
     // A preset sets the value, never the unit: the field the teacher chose stays put.
     expect(screen.getByRole('button', { name: 'hours' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: '1.5h' }).getAttribute('aria-pressed')).toBe('true')
-    // The helper names both units so 1.5 h and 90 min never look like different classes.
-    expect(screen.getByText(/1\.5 h · 90 min/)).toBeTruthy()
-    expect(screen.getByText(/1 Hr 30 Mins/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2.5h' }).getAttribute('aria-pressed')).toBe('true')
+    // The helper names both units so 2.5 h and 150 min never look like different classes.
+    expect(screen.getByText(/2\.5 h · 150 min/)).toBeTruthy()
+    expect(screen.getByText(/2 Hrs 30 Mins/)).toBeTruthy()
 
-    // Back in minutes the presets are minute presets again, still driving the same length.
+    // Back in minutes: minute labels, same length still selected.
     fireEvent.click(screen.getByRole('button', { name: 'minutes' }))
-    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('90')
-    expect(screen.queryByRole('button', { name: '90m' })).toBeNull()
-    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
+    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('150')
+    expect(screen.getByRole('button', { name: '150m' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('button', { name: '2.5h' })).toBeNull()
   })
 
   it('SH-27 never promises a duration the teacher did not type', async () => {
