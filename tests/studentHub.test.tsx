@@ -3,10 +3,12 @@ import { resolve } from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import App from '../src/App'
+import { shortStudentName } from '../src/lib/studentHub'
 import { dataKeyFor } from '../src/lib/auth'
 import { seedJson } from '../src/lib/store'
 import {
   fakeFoldersFor,
+  fakeHubStudentsFor,
   fakeMeetingFor,
   fakeMeetingsFor,
   fakeNotesFor,
@@ -86,7 +88,7 @@ describe('Student Hub Manager (SH)', () => {
     await openHub()
     // NEET Biology is the seeded first batch: eight students, each with a roll number.
     const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
-    expect(within(neet).getByText('8')).toBeTruthy()
+    expect(await within(neet).findByText('0/8 allowed')).toBeTruthy()
     expect(within(neet).getByText('Aarav Sharma')).toBeTruthy()
     expect(within(neet).getByText('#01')).toBeTruthy()
     expect(within(neet).queryByText('Arjun Verma')).toBeNull()
@@ -94,7 +96,7 @@ describe('Student Hub Manager (SH)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'JEE Maths' }))
     const jee = await screen.findByRole('region', { name: 'Students in JEE Maths' })
     expect(within(jee).getByText('Arjun Verma')).toBeTruthy()
-    expect(within(jee).getByText('7')).toBeTruthy()
+    expect(await within(jee).findByText('0/7 allowed')).toBeTruthy()
     expect(within(jee).queryByText('Aarav Sharma')).toBeNull()
   })
 
@@ -625,10 +627,49 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
+  it('SH-30 the allow switch publishes short names and is the gate for the portal', async () => {
+    // "Vinay Soni" -> "Vinay S.": the portal is never given a full name.
+    expect(shortStudentName('Vinay Soni')).toBe('Vinay S.')
+    expect(shortStudentName('  aarav   kumar  sharma ')).toBe('Aarav S.')
+    expect(shortStudentName('Aarav')).toBe('Aarav')
+    expect(shortStudentName('   ')).toBe('')
+
+    await openHub()
+    // Every student starts switched off, and the roster is published with short names only.
+    const first = await screen.findByRole('button', { name: 'Aarav Sharma access' })
+    expect(first.getAttribute('aria-pressed')).toBe('false')
+    await waitFor(() => expect(fakeHubStudentsFor('t1')).toHaveLength(8))
+    expect(fakeHubStudentsFor('t1').every((row) => row.allowed === false)).toBe(true)
+    expect(fakeHubStudentsFor('t1').map((row) => row.short_name)).toContain('Aarav S.')
+    expect(fakeHubStudentsFor('t1').some((row) => row.short_name.includes('Sharma'))).toBe(false)
+    expect(await screen.findByText('0/8 allowed')).toBeTruthy()
+
+    fireEvent.click(first)
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.short_name === 'Aarav S.')?.allowed).toBe(true))
+    expect((await screen.findByRole('button', { name: 'Aarav Sharma access' })).getAttribute('aria-pressed')).toBe('true')
+    expect(await screen.findByText('1/8 allowed')).toBeTruthy()
+    expect(await screen.findByText(/Aarav Sharma can now open the Student Hub/)).toBeTruthy()
+
+    // Switching a name on then re-syncing another batch must never grant anyone else access.
+    fireEvent.click(screen.getByRole('button', { name: 'JEE Maths' }))
+    await waitFor(() => expect(fakeHubStudentsFor('t1')).toHaveLength(15))
+    expect(fakeHubStudentsFor('t1').filter((row) => row.allowed)).toHaveLength(1)
+
+    // Back to NEET: his allow flag survived the other batch's sync.
+    fireEvent.click(screen.getByRole('button', { name: 'NEET Biology' }))
+    const back = await screen.findByRole('button', { name: 'Aarav Sharma access' })
+    expect(back.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(back)
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.short_name === 'Aarav S.')?.allowed).toBe(false))
+    expect(await screen.findByText(/can no longer open the Student Hub/)).toBeTruthy()
+  })
+
   it('SP-02 has one-time local onboarding, a teacher switcher, duration/expiry UI and strict scope headers', () => {
     const html = read('student-hub/index.html')
     expect(html).toContain('id="onboarding"')
-    expect(html).toContain('id="student-name"')
+    expect(html).toContain('id="student-select"')
+    // No free-text name: a student claims a name the teacher allowed.
+    expect(html).not.toContain('id="student-name"')
     expect(html).toContain('id="batch-select"')
     expect(html).toContain('id="teacher-switch"')
     expect(html).toContain('Switch Teacher')
@@ -763,14 +804,50 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain('function fillTeacherOptions')
     expect(portal).toContain("els.batchSelect.addEventListener('change'")
     expect(portal).toContain('fillTeacherOptions(els.batchSelect.value)')
-    expect(portal).toContain('fillTeacherOptions(cleanLine(els.batchSelect.value, 80))')
+    expect(portal).toContain('const batch = cleanLine(els.batchSelect.value, 80)')
     // Submitting saves all three at once, and refuses to save a teacher from another batch.
     expect(portal).toContain('const teachers = teachersForBatch(batch)')
-    expect(portal).toContain("showOnboardingError('Please choose your teacher.')")
-    expect(portal).toContain('writeProfile({ name, batch, teacher: teacher.id })')
+    expect(portal).toContain('const chosen = state.classmates.find((row) => row.key === studentKey)')
+    expect(portal).toContain('writeProfile({ name: chosen.short, batch, teacher: teacher.id, student: chosen.key })')
     // A missing teacher re-opens the same dialog instead of a second screen.
     expect(portal).toContain('Choose your teacher to finish setting up.')
     expect(portal).not.toContain('teacher-picker')
+  })
+
+  it('SP-07 the access migration stores short names only, and anon can read nothing but the list', () => {
+    const sql = read('supabase/migrations/20261124120000_student_hub_student_access.sql')
+    expect(sql).toContain('create table if not exists public.student_hub_students')
+    expect(sql).toContain('short_name text not null')
+    // The full name is never stored, so it can never leak through a select.
+    expect(sql).not.toMatch(/full_name/)
+    expect(sql).toContain('constraint student_hub_students_key_format')
+    // anon gets no table access at all; only the two narrow functions.
+    expect(sql).toContain('revoke all on public.student_hub_students from public, anon, authenticated;')
+    expect(sql).toContain('grant execute on function public.student_hub_classmates(text) to anon, authenticated;')
+    expect(sql).toContain('grant execute on function public.student_hub_student_allowed(uuid, text) to anon, authenticated;')
+    expect(sql).toContain('where s.allowed')
+    // Access is per teacher row, and only the owner can write it.
+    expect(sql).toContain('using (teacher_id = auth.uid())')
+    // A re-sync must preserve the flag rather than re-granting everyone.
+    expect(sql).toMatch(/on conflict \(teacher_id, student_key\) do update[\s\S]{0,220}short_name = excluded\.short_name/)
+    expect(sql).not.toMatch(/on conflict \(teacher_id, student_key\) do update[\s\S]{0,220}allowed = /)
+    // Sync is scoped to one batch, so publishing another cannot wipe this roster.
+    expect(sql).toContain('and btrim(batch_name) = v_batch')
+    // Deleting the account clears the projection too.
+    expect(sql).toContain('delete from public.student_hub_students where teacher_id = who;')
+
+    // The portal claims a name from the list instead of typing one.
+    const html = read('student-hub/index.html')
+    const portal = read('student-hub/portal.js')
+    expect(html).toContain('id="student-select"')
+    expect(html).toContain('aria-label="Your name"')
+    expect(html).toMatch(/<select id="student-select" aria-label="Your name" required disabled>/)
+    expect(portal).toContain("client.rpc('student_hub_classmates'")
+    expect(portal).toContain("client.rpc('student_hub_student_allowed'")
+    expect(portal).toContain("student: 'student_key'")
+    expect(portal).toContain('function stillAllowed')
+    // Access is re-checked on every visit, not just during setup.
+    expect(portal).toContain('await stillAllowed(profile.teacher, profile.student)')
   })
 
   it('SP-05 keeps the onboarding card on one left edge with its own padding', () => {
@@ -796,7 +873,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).toContain('.onboarding-card h2 { margin: 0 0 10px; font-size: 27px; }')
 
     // The stylesheet is cache-busted so the phone actually fetches the fix.
-    expect(html).toMatch(/styles\.css\?v=7/)
+    expect(html).toMatch(/styles\.css\?v=8/)
   })
 
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {

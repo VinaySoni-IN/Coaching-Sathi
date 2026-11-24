@@ -52,6 +52,14 @@ interface NoteRow {
   updated_at: string
 }
 interface StoredFile { path: string; name: string; size: number; type: string }
+interface HubStudentRow {
+  teacher_id: string
+  batch_name: string
+  teacher_name: string
+  student_key: string
+  short_name: string
+  allowed: boolean
+}
 
 const db = {
   users: [] as FakeUser[],
@@ -62,6 +70,7 @@ const db = {
   meetingSeq: 0,
   folders: [] as FolderRow[],
   notes: [] as NoteRow[],
+  hubStudents: [] as HubStudentRow[],
   files: new Map<string, StoredFile>(),
   seq: 0,
   noteSeq: 0,
@@ -82,6 +91,7 @@ export function resetFakeCloud() {
   db.meetingSeq = 0
   db.folders = []
   db.notes = []
+  db.hubStudents = []
   db.files.clear()
   db.seq = 0
   db.noteSeq = 0
@@ -305,6 +315,29 @@ const storageFrom = (bucket: string) => ({
     return { data: { path }, error: null }
   },
   remove: async (paths: string[]) => {
+    // Anon-safe: the setup dialog lists allowed classmates before any session exists.
+    if (name === 'student_hub_classmates') {
+      const batch = clean(args.p_batch_name, 80)
+      if (!batch) return err('invalid student hub scope', '22023')
+      const rows = db.hubStudents
+        .filter((row) => row.allowed && row.batch_name === batch)
+        .sort((a, b) => a.short_name.localeCompare(b.short_name))
+        .map((row) => ({
+          teacher_id: row.teacher_id,
+          teacher_name: row.teacher_name,
+          student_key: row.student_key,
+          short_name: row.short_name,
+        }))
+      return { data: rows, error: null }
+    }
+    if (name === 'student_hub_student_allowed') {
+      const teacherId = clean(args.p_teacher_id, 64)
+      const key = clean(args.p_student_key, 64)
+      return {
+        data: db.hubStudents.some((row) => row.teacher_id === teacherId && row.student_key === key && row.allowed),
+        error: null,
+      }
+    }
     const me = currentUser()
     if (!me) return err('not authenticated', '28000')
     paths.forEach((path) => { if (path.startsWith(`${me.id}/`)) db.files.delete(path) })
@@ -558,6 +591,44 @@ export const fakeCloud = {
       db.notes.forEach((note) => { if (note.folder_id === id) { note.folder_id = null; note.folder_name = null } })
       return { data: true, error: null }
     }
+    if (name === 'sync_my_hub_students') {
+      const batch = clean(args.p_batch_name, 80)
+      const teacherName = clean(args.p_teacher_name, 120)
+      if (!batch) return err('choose a batch first', '22023')
+      const list = Array.isArray(args.p_students) ? (args.p_students as { key?: string; short?: string }[]) : []
+      const keep: string[] = []
+      for (const item of list) {
+        const key = clean(item.key, 64)
+        const short = clean(item.short, 40)
+        if (!key || !short) continue
+        keep.push(key)
+        const row = db.hubStudents.find((entry) => entry.teacher_id === me.id && entry.student_key === key)
+        if (row) {
+          // The allow flag is preserved: a re-sync never silently opens access.
+          row.batch_name = batch
+          row.teacher_name = teacherName
+          row.short_name = short
+        } else {
+          db.hubStudents.push({ teacher_id: me.id, batch_name: batch, teacher_name: teacherName, student_key: key, short_name: short, allowed: false })
+        }
+      }
+      // Scoped to this batch: syncing another batch must never wipe this roster.
+      db.hubStudents = db.hubStudents.filter((row) => row.teacher_id !== me.id || row.batch_name !== batch || keep.includes(row.student_key))
+      return {
+        data: db.hubStudents
+          .filter((row) => row.teacher_id === me.id)
+          .sort((a, b) => a.short_name.localeCompare(b.short_name))
+          .map((row) => ({ student_key: row.student_key, short_name: row.short_name, allowed: row.allowed })),
+        error: null,
+      }
+    }
+    if (name === 'set_my_hub_student_access') {
+      const key = clean(args.p_student_key, 64)
+      const row = db.hubStudents.find((entry) => entry.teacher_id === me.id && entry.student_key === key)
+      if (!row) return err('no such student', '22023')
+      row.allowed = Boolean(args.p_allowed)
+      return { data: row.allowed, error: null }
+    }
     if (name === 'delete_me') {
       db.touched = true
       db.backups.delete(me.id)
@@ -565,6 +636,7 @@ export const fakeCloud = {
       db.meetings = db.meetings.filter((meeting) => meeting.teacher_id !== me.id)
       db.folders = db.folders.filter((folder) => folder.teacher_id !== me.id)
       db.notes = db.notes.filter((note) => note.teacher_id !== me.id)
+      db.hubStudents = db.hubStudents.filter((row) => row.teacher_id !== me.id)
       for (const path of [...db.files.keys()]) if (path.startsWith(`${me.id}/`)) db.files.delete(path)
       db.users = db.users.filter((u) => u.id !== me.id)
       db.session = null
@@ -621,6 +693,8 @@ export function seedFakeFolder(userId: string, row: Partial<FolderRow> = {}) {
 export const fakeBackupFor = (userId: string) => db.backups.get(userId)?.doc ?? null
 export const fakeMeetingFor = (userId: string) => db.meetings.find((meeting) => meeting.teacher_id === userId) ?? null
 export const fakeMeetingsFor = (userId: string) => db.meetings.filter((meeting) => meeting.teacher_id === userId)
+/** The roster projection the portal reads: short names + the teacher's allow flag. */
+export const fakeHubStudentsFor = (userId: string) => db.hubStudents.filter((row) => row.teacher_id === userId)
 export const fakeNotesFor = (userId: string) => db.notes.filter((note) => note.teacher_id === userId)
 export const fakeFoldersFor = (userId: string) => db.folders.filter((folder) => folder.teacher_id === userId)
 export const fakeSnapshotFor = (userId: string, batch: string) => ({

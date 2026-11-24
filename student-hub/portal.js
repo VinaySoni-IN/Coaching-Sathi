@@ -20,6 +20,7 @@ const STORAGE_KEYS = {
   name: 'student_name',
   batch: 'selected_batch',
   teacher: 'selected_teacher_id',
+  student: 'student_key',
 }
 
 const els = {
@@ -30,7 +31,7 @@ const els = {
   changeProfile: document.getElementById('change-profile'),
   onboarding: document.getElementById('onboarding'),
   onboardingForm: document.getElementById('onboarding-form'),
-  studentName: document.getElementById('student-name'),
+  studentSelect: document.getElementById('student-select'),
   batchSelect: document.getElementById('batch-select'),
   onboardingError: document.getElementById('onboarding-error'),
   onboardingRetry: document.getElementById('onboarding-retry'),
@@ -51,6 +52,9 @@ const els = {
 const state = {
   config: { url: '', key: '' },
   studentName: '',
+  studentKey: '',
+  classmates: [],
+  classmatesError: false,
   batch: '',
   teacherId: '',
   directory: [],
@@ -188,9 +192,10 @@ function readProfile() {
       name: cleanLine(localStorage.getItem(STORAGE_KEYS.name), 80),
       batch: cleanLine(localStorage.getItem(STORAGE_KEYS.batch), 80),
       teacher: cleanLine(localStorage.getItem(STORAGE_KEYS.teacher), 64),
+      student: cleanLine(localStorage.getItem(STORAGE_KEYS.student), 64),
     }
   } catch {
-    return { name: '', batch: '', teacher: '' }
+    return { name: '', batch: '', teacher: '', student: '' }
   }
 }
 
@@ -199,6 +204,7 @@ function writeProfile(profile) {
     localStorage.setItem(STORAGE_KEYS.name, cleanLine(profile.name, 80))
     localStorage.setItem(STORAGE_KEYS.batch, cleanLine(profile.batch, 80))
     localStorage.setItem(STORAGE_KEYS.teacher, cleanLine(profile.teacher, 64))
+    localStorage.setItem(STORAGE_KEYS.student, cleanLine(profile.student, 64))
   } catch {
     showToast('This device blocked local storage; you may need to set up again next visit.')
   }
@@ -280,6 +286,55 @@ function fillTeacherOptions(batch, { keepSelection = false } = {}) {
   els.teacherSelect.disabled = !batch || !teachers.length
 }
 
+/** Allowed classmates of a batch: { teacher_id, teacher_name, student_key, short_name }. */
+async function loadClassmates(batch) {
+  state.classmates = []
+  if (!client || !batch) return []
+  try {
+    const { data, error } = await client.rpc('student_hub_classmates', { p_batch_name: batch })
+    if (error) throw error
+    state.classmates = (data || [])
+      .map((row) => ({
+        teacherId: cleanLine(row.teacher_id, 64),
+        teacherName: cleanLine(row.teacher_name, 120),
+        key: cleanLine(row.student_key, 64),
+        short: cleanLine(row.short_name, 40),
+      }))
+      .filter((row) => row.key && row.short && row.teacherId)
+  } catch {
+    state.classmates = []
+    state.classmatesError = true
+  }
+  return state.classmates
+}
+
+/**
+ * The names a student may claim: only rows the teacher switched on. When two teachers allow the same
+ * short name, the teacher is appended so the student can tell them apart.
+ */
+function fillStudentOptions(selectedKey = '') {
+  if (!els.studentSelect) return
+  els.studentSelect.replaceChildren()
+  const placeholder = document.createElement('option')
+  placeholder.value = ''
+  const undecided = !cleanLine(els.batchSelect.value, 80)
+  const duplicate = state.classmates.filter((row) => row.short === (state.classmates.find((x) => x.key === selectedKey) || {}).short).length > 1
+  placeholder.textContent = undecided
+    ? 'Choose your batch first'
+    : state.classmates.length ? 'Select your name' : 'No names allowed yet'
+  els.studentSelect.append(placeholder)
+  state.classmates.forEach((row) => {
+    const option = document.createElement('option')
+    option.value = row.key
+    const sameName = state.classmates.filter((other) => other.short === row.short).length > 1
+    option.textContent = sameName && row.teacherName ? `${row.short} — ${row.teacherName}` : row.short
+    if (duplicate && row.teacherName) option.dataset.teacher = row.teacherId
+    els.studentSelect.append(option)
+  })
+  els.studentSelect.value = state.classmates.some((row) => row.key === selectedKey) ? selectedKey : ''
+  els.studentSelect.disabled = undecided || !state.classmates.length
+}
+
 function showOnboarding() {
   els.batchSelect.replaceChildren()
   const placeholder = document.createElement('option')
@@ -294,8 +349,19 @@ function showOnboarding() {
   })
   els.batchSelect.value = state.batch && state.batches.includes(state.batch) ? state.batch : ''
   els.batchSelect.disabled = state.batches.length === 0
-  els.studentName.value = state.studentName
   fillTeacherOptions(els.batchSelect.value)
+  fillStudentOptions(state.studentKey)
+  const savedBatch = cleanLine(els.batchSelect.value, 80)
+  if (savedBatch && els.studentSelect) {
+    // Names arrive a moment later; the field says so rather than looking broken.
+    els.studentSelect.disabled = true
+    els.studentSelect.replaceChildren(new Option('Loading names…', ''))
+    state.classmatesError = false
+    void loadClassmates(savedBatch).then(() => {
+      fillStudentOptions(state.studentKey)
+      if (state.classmatesError) showOnboardingError('We could not load the names for this batch. Check your connection and tap Refresh.', true)
+    })
+  }
   clearOnboardingError()
   if (state.directoryError) {
     // A failed request is not the teacher's fault — offer the same friendly retry, say why.
@@ -304,19 +370,20 @@ function showOnboarding() {
     showOnboardingError('No batches are listed yet. Ask your teacher to add your batch, then tap Refresh.', true)
   }
   els.onboarding.hidden = false
-  try { els.studentName.focus() } catch { /* not focusable in some environments */ }
+  try { els.studentSelect.focus() } catch { /* not focusable in some environments */ }
 }
 
 function submitOnboarding(event) {
   event.preventDefault()
-  const name = cleanLine(els.studentName.value, 80)
   const batch = cleanLine(els.batchSelect.value, 80)
-  if (name.length < 2) {
-    showOnboardingError('Please enter your full name.')
-    return
-  }
   if (!batch || !state.batches.includes(batch)) {
     showOnboardingError('Please choose your batch from the dropdown.', !state.batches.length)
+    return
+  }
+  const studentKey = cleanLine(els.studentSelect ? els.studentSelect.value : '', 64)
+  const chosen = state.classmates.find((row) => row.key === studentKey)
+  if (!chosen) {
+    showOnboardingError('Pick your name from the list. Only names your teacher allowed appear there.', !state.classmates.length)
     return
   }
   const teachers = teachersForBatch(batch)
@@ -325,17 +392,16 @@ function submitOnboarding(event) {
     showOnboardingError(`No teacher is listed for ${batch} yet. Ask your teacher to share a note or start a class, then tap Refresh.`, true)
     return
   }
-  const teacherId = cleanLine(els.teacherSelect ? els.teacherSelect.value : '', 64)
-  const teacher = teachers.find((row) => row.id === teacherId)
-  if (!teacher) {
-    showOnboardingError('Please choose your teacher.')
-    return
-  }
-  state.studentName = name
+  // The teacher is a fact, not a preference: this name was allowed by exactly one of them.
+  const teacher = teachers.find((row) => row.id === chosen.teacherId)
+    || { id: chosen.teacherId, name: chosen.teacherName, batch }
+  if (els.teacherSelect && els.teacherSelect.value !== teacher.id) els.teacherSelect.value = teacher.id
+  state.studentName = chosen.short
+  state.studentKey = chosen.key
   state.batch = batch
   state.teacherId = teacher.id
   state.teachers = teachers
-  writeProfile({ name, batch, teacher: teacher.id })
+  writeProfile({ name: chosen.short, batch, teacher: teacher.id, student: chosen.key })
   els.onboarding.hidden = true
   clearOnboardingError()
   renderTopbar()
@@ -351,7 +417,7 @@ function chooseTeacher(id) {
   const teacher = state.teachers.find((row) => row.id === id)
   if (!teacher) return
   state.teacherId = teacher.id
-  writeProfile({ name: state.studentName, batch: state.batch, teacher: teacher.id })
+  writeProfile({ name: state.studentName, batch: state.batch, teacher: teacher.id, student: state.studentKey })
   renderTopbar()
   state.loadedOnce = false
   void loadAll().then(() => {
@@ -364,6 +430,8 @@ function chooseTeacher(id) {
 function changeProfile() {
   clearProfile()
   state.studentName = ''
+  state.studentKey = ''
+  state.classmates = []
   state.batch = ''
   state.teacherId = ''
   state.teachers = []
@@ -905,9 +973,28 @@ function bindControls() {
   els.subjectFilter.addEventListener('change', () => { state.subject = els.subjectFilter.value; renderNotes() })
   els.kindFilter.addEventListener('change', () => { state.kind = els.kindFilter.value; renderNotes() })
   els.onboardingForm.addEventListener('submit', submitOnboarding)
-  // Switching batch rewrites the teacher list on the spot, so the two can never disagree.
-  els.batchSelect.addEventListener('change', () => {
-    fillTeacherOptions(cleanLine(els.batchSelect.value, 80))
+  // Switching batch rewrites both lists on the spot: teachers from the directory, names from the
+  // access list the teacher published. The two can never disagree with the batch on screen.
+  els.batchSelect.addEventListener('change', async () => {
+    const batch = cleanLine(els.batchSelect.value, 80)
+    fillTeacherOptions(batch)
+    clearOnboardingError()
+    if (els.studentSelect) {
+      els.studentSelect.disabled = true
+      els.studentSelect.replaceChildren(new Option(batch ? 'Loading names…' : 'Choose your batch first', ''))
+    }
+    await loadClassmates(batch)
+    fillStudentOptions('')
+    if (state.classmatesError) {
+      showOnboardingError('We could not load the names for this batch. Check your connection and tap Refresh.', true)
+    } else if (batch && !state.classmates.length) {
+      showOnboardingError(`No student name is allowed in ${batch} yet. Ask your teacher to switch your access on, then tap Refresh.`, true)
+    }
+  })
+  // Picking a name settles the teacher: it is the teacher who allowed that name.
+  if (els.studentSelect) els.studentSelect.addEventListener('change', () => {
+    const picked = state.classmates.find((row) => row.key === cleanLine(els.studentSelect.value, 64))
+    if (picked && els.teacherSelect) els.teacherSelect.value = picked.teacherId
     clearOnboardingError()
   })
   if (els.teacherSelect) els.teacherSelect.addEventListener('change', clearOnboardingError)
@@ -966,17 +1053,22 @@ async function start() {
   }
   const profile = readProfile()
   state.studentName = profile.name
+  state.studentKey = profile.student
   state.batch = profile.batch
   state.teacherId = profile.teacher
   state.teachers = state.directory.filter((row) => row.batch === state.batch)
   renderTopbar()
 
-  if (!profile.name || !profile.batch || !state.batches.includes(profile.batch)) {
+  if (!profile.name || !profile.student || !profile.batch || !state.batches.includes(profile.batch)) {
     showOnboarding()
     // A saved batch that no longer exists is different from "nothing published yet".
     if (!state.directoryError && profile.batch && state.batches.length && !state.batches.includes(profile.batch)) {
       showOnboardingError('Your saved batch is not listed any more. Please choose it again.')
     }
+  } else if (!(await stillAllowed(profile.teacher, profile.student))) {
+    // Access can be taken away after setup, so it is re-checked on every visit.
+    showOnboarding()
+    showOnboardingError('Your teacher has not allowed this name into the Student Hub. Ask them to switch your access on, then tap Refresh.')
   } else if (!profile.teacher || !state.teachers.some((teacher) => teacher.id === profile.teacher)) {
     // Setup is one dialog: a stale or missing teacher simply re-opens it, filled in, with the fix named.
     state.teacherId = ''
@@ -997,6 +1089,26 @@ async function start() {
   globalThis.addEventListener('pagehide', () => {
     if (client && channel) client.removeChannel(channel)
   })
+}
+
+/**
+ * Ask the database whether this name is still allowed. A network failure must not lock a student out
+ * of their own classroom, so an unreachable check fails open — the content reads stay scope-protected
+ * by RLS either way.
+ */
+async function stillAllowed(teacherId, studentKey) {
+  if (!client) return true
+  if (!teacherId || !studentKey) return false
+  try {
+    const { data, error } = await client.rpc('student_hub_student_allowed', {
+      p_teacher_id: teacherId,
+      p_student_key: studentKey,
+    })
+    if (error) throw error
+    return data === true
+  } catch {
+    return true
+  }
 }
 
 void start()
