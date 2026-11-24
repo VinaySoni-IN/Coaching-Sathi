@@ -379,19 +379,19 @@ describe('Student Hub Manager (SH)', () => {
     expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
   })
 
-  it('SH-26 offers six slabs per unit, and hours only use clean halves', async () => {
+  it('SH-26 offers seven slabs per unit, and hours only use clean halves', async () => {
     await openHub()
     // One hour is the default class length, and it is a preset.
     expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('60')
     expect(screen.getByText(/shows as “1 Hr”/)).toBeTruthy()
 
-    const minuteChips = ['30m', '45m', '60m', '90m', '120m', '150m']
+    const minuteChips = ['30m', '45m', '60m', '90m', '120m', '180m', '240m']
     for (const label of minuteChips) expect(screen.getByRole('button', { name: label })).toBeTruthy()
     expect(screen.getByRole('button', { name: '60m' }).getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(screen.getByRole('button', { name: 'hours' }))
-    // Six slabs in hours: 1, 1.5, 2, 2.5, 3, 4. No 0.25h / 0.75h — nobody says "zero point seven five".
-    const hourChips = ['1h', '1.5h', '2h', '2.5h', '3h', '4h']
+    // Seven slabs in hours: 1, 1.5, 2, 2.5, 3, 3.5, 4 — every half hour, no 0.25h / 0.75h.
+    const hourChips = ['1h', '1.5h', '2h', '2.5h', '3h', '3.5h', '4h']
     for (const label of hourChips) expect(screen.getByRole('button', { name: label })).toBeTruthy()
     for (const label of ['0.25h', '0.5h', '0.75h', '1.25h']) {
       expect(screen.queryByRole('button', { name: label })).toBeNull()
@@ -400,21 +400,20 @@ describe('Student Hub Manager (SH)', () => {
     // 60 min converted to 1 h, so the 1h slab carries the selection across the unit switch.
     expect(screen.getByRole('button', { name: '1h' }).getAttribute('aria-pressed')).toBe('true')
 
-    fireEvent.click(screen.getByRole('button', { name: '2.5h' }))
-    const hoursField = screen.getByLabelText('Duration in hours') as HTMLInputElement
-    expect(hoursField.value).toBe('2.5')
-    // A preset sets the value, never the unit: the field the teacher chose stays put.
+    // A ladder that skips 3.5 leaves the teacher typing the length they use most.
+    fireEvent.click(screen.getByRole('button', { name: '3.5h' }))
+    expect((screen.getByLabelText('Duration in hours') as HTMLInputElement).value).toBe('3.5')
     expect(screen.getByRole('button', { name: 'hours' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: '2.5h' }).getAttribute('aria-pressed')).toBe('true')
-    // The helper names both units so 2.5 h and 150 min never look like different classes.
-    expect(screen.getByText(/2\.5 h · 150 min/)).toBeTruthy()
-    expect(screen.getByText(/2 Hrs 30 Mins/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '3.5h' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText(/3\.5 h · 210 min/)).toBeTruthy()
+    expect(screen.getByText(/3 Hrs 30 Mins/)).toBeTruthy()
 
-    // Back in minutes: minute labels, same length still selected.
+    fireEvent.click(screen.getByRole('button', { name: '3h' }))
+    // Back in minutes: the same class is a slab there too, so the selection survives.
     fireEvent.click(screen.getByRole('button', { name: 'minutes' }))
-    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('150')
-    expect(screen.getByRole('button', { name: '150m' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.queryByRole('button', { name: '2.5h' })).toBeNull()
+    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('180')
+    expect(screen.getByRole('button', { name: '180m' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('button', { name: '3h' })).toBeNull()
   })
 
   it('SH-27 never promises a duration the teacher did not type', async () => {
