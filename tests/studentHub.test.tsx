@@ -261,6 +261,76 @@ describe('Student Hub Manager (SH)', () => {
     expect(start.parentElement?.className).toContain('flex-nowrap')
     expect(screen.getByRole('button', { name: /Start Now/ }).className).toContain('px-[18px]')
   })
+
+  it('SH-15 converts the duration value when the unit switches', async () => {
+    await openHub()
+    fireEvent.change(screen.getByLabelText('Duration in minutes'), { target: { value: '45' } })
+    expect(await screen.findByText(/shows as “45 Mins”/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'hours' }))
+    expect((screen.getByLabelText('Duration in hours') as HTMLInputElement).value).toBe('0.75')
+    expect(await screen.findByText(/shows as “45 Mins”/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'minutes' }))
+    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('45')
+  })
+
+  it('SH-16 editing a meeting from another batch never re-tags or re-files it', async () => {
+    const future = new Date(Date.now() + 3 * 60 * 60_000).toISOString()
+    seedFakeMeeting('t1', { meeting_title: 'JEE doubt class', batch_name: 'JEE Maths', scheduled_start: future, status: 'scheduled' })
+    seedFakeMeeting('t1', { meeting_title: 'NEET class', batch_name: 'NEET Biology', scheduled_start: future, status: 'scheduled' })
+    await openHub()
+
+    const row = screen.getByText('JEE doubt class').closest('li') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
+    // The batch context must not jump to JEE just because we opened its meeting.
+    expect(screen.getByRole('button', { name: 'NEET Biology' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText(/Editing · JEE Maths/)).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'JEE doubt class — part 2' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }))
+
+    await waitFor(() => expect(fakeMeetingsFor('t1').some((m) => m.meeting_title === 'JEE doubt class — part 2')).toBe(true))
+    const edited = fakeMeetingsFor('t1').find((m) => m.meeting_title === 'JEE doubt class — part 2')
+    expect(edited?.batch_name).toBe('JEE Maths')
+    expect(fakeMeetingsFor('t1')).toHaveLength(2)
+  })
+
+  it('SH-17 refuses a brand-new class whose start time is already over', async () => {
+    await openHub()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const past = new Date(Date.now() - 4 * 60 * 60_000)
+    fireEvent.change(screen.getByLabelText('Start date and time'), {
+      target: { value: `${past.getFullYear()}-${pad(past.getMonth() + 1)}-${pad(past.getDate())}T${pad(past.getHours())}:${pad(past.getMinutes())}` },
+    })
+    fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Ghost class' } })
+    fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
+
+    expect(await screen.findByText(/already passed/i)).toBeTruthy()
+    expect(fakeMeetingsFor('t1')).toHaveLength(0)
+  })
+
+  it('SH-18 defaults a new class to a future quarter hour', async () => {
+    await openHub()
+    const start = screen.getByLabelText('Start date and time') as HTMLInputElement
+    expect(Date.parse(start.value)).toBeGreaterThan(Date.now())
+    expect(new Date(Date.parse(start.value)).getMinutes() % 15).toBe(0)
+  })
+
+  it('SH-19 never composes size utilities and keeps every 48px row aligned', () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    // Tailwind emits .h-8 < .h-9 < .h-10 < .h-11 < .h-12, so `field h-10` silently renders 48px.
+    expect(manager).not.toMatch(/\$\{field\} h-/)
+    expect(manager).not.toMatch(/\$\{smallAction\} h-/)
+    // 48px row geometry: field 48, date field 48, Start Now 48, segmented 40 + 4+4 wrapper = 48.
+    expect(manager).toMatch(/const fieldDate = '[^']*h-12 /)
+    expect(manager).toMatch(/const formAction = '[^']*h-12 /)
+    expect(manager).toMatch(/const segmentPill = 'h-10 /)
+    expect(manager).toMatch(/const segmentShell = '[^']*p-1'/)
+    // Header text and the batch pills sit flush with the card edges.
+    expect(manager).not.toContain('<header className="px-1">')
+    expect(manager).not.toContain('-mx-1 flex items-center gap-1.5 overflow-x-auto')
+  })
 })
 
 describe('Student Portal and RLS (SP)', () => {
