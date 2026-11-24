@@ -32,7 +32,7 @@ interface Props {
 type Screen = { name: 'list' } | { name: 'chat'; id: string } | { name: 'edit' }
 
 const WA = { bg: '#0b141a', bar: '#202c33', out: '#005c4b', green: '#00a884', line: 'rgba(255,255,255,.08)' }
-const nowTime = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+const nowTime = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
 
 export default function WhatsAppSheet(p: Props) {
   const [screen, setScreen] = useState<Screen>({ name: 'list' })

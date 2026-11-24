@@ -64,11 +64,11 @@ export function formatDurationLabel(minutes) {
   return `${hours} ${hours === 1 ? 'Hr' : 'Hrs'} ${rest} Mins`
 }
 
-/** Local clock time, e.g. "6:30 pm". */
+/** Local clock time, always 12-hour: e.g. "6:30 PM". Never "18:30", whatever the device locale. */
 export function formatClock(iso) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 /** "Starts in 12 min" / "Starts in 2 hr 5 min" — empty once the class has begun. */
