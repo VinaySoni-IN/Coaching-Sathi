@@ -379,6 +379,49 @@ describe('Student Hub Manager (SH)', () => {
     expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
   })
 
+  it('SH-26 offers duration presets in whichever unit the teacher is typing', async () => {
+    await openHub()
+    // Minutes: 30m / 45m / 60m.
+    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '45m' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '60m' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'hours' }))
+    // The same control now speaks hours instead of offering "45m" in an hours field.
+    expect(screen.getByRole('button', { name: '1h' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '1.5h' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2h' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '45m' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '1.5h' }))
+    const hoursField = screen.getByLabelText('Duration in hours') as HTMLInputElement
+    expect(hoursField.value).toBe('1.5')
+    // A preset sets the value, never the unit: the field the teacher chose stays put.
+    expect(screen.getByRole('button', { name: 'hours' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: '1.5h' }).getAttribute('aria-pressed')).toBe('true')
+    // The helper names both units so 1.5 h and 90 min never look like different classes.
+    expect(screen.getByText(/1\.5 h · 90 min/)).toBeTruthy()
+    expect(screen.getByText(/1 Hr 30 Mins/)).toBeTruthy()
+
+    // Back in minutes the presets are minute presets again, still driving the same length.
+    fireEvent.click(screen.getByRole('button', { name: 'minutes' }))
+    expect((screen.getByLabelText('Duration in minutes') as HTMLInputElement).value).toBe('90')
+    expect(screen.queryByRole('button', { name: '90m' })).toBeNull()
+    expect(screen.getByRole('button', { name: '30m' })).toBeTruthy()
+  })
+
+  it('SH-27 never promises a duration the teacher did not type', async () => {
+    await openHub()
+    fireEvent.change(screen.getByLabelText('Duration in minutes'), { target: { value: '0' } })
+    // A zero used to fall back to 45 minutes and still read as a valid class.
+    expect(await screen.findByText(/Enter a class length above zero/)).toBeTruthy()
+    expect(screen.queryByText(/shows as “45 Mins”/)).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Duration in minutes'), { target: { value: '45' } })
+    expect(await screen.findByText(/shows as “45 Mins”/)).toBeTruthy()
+    expect(screen.queryByText(/above zero/)).toBeNull()
+  })
+
   it('SH-25 renders the Hub flat: hairlines only, no cast shadows', async () => {
     const manager = read('src/components/StudentHubManager.tsx')
     const css = read('src/index.css')
