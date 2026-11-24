@@ -74,11 +74,14 @@ interface Props {
   ask: (confirm: Omit<Confirm, 'run'>, run: () => void) => void
 }
 
-/* ---- Design tokens. One surface, one field, one pill — used by every block below. ---- */
-// Card: 24px, hairline border, 20px padding. `.hub-card` carries the surface + shadow.
+/* ---- Design tokens.
+   Every variant is a COMPLETE class string. Never append a height/padding override to one of these:
+   Tailwind emits .h-8 < .h-9 < .h-10 < .h-11 < .h-12, so `field h-10` silently renders 48px and
+   rows drift out of alignment. One variant per control size instead. ---- */
 const card = 'hub-card relative z-10 rounded-[24px] border border-white/8 p-5'
-// Single-line field: 48px, 16px radius, 16px padding, quiet contrast, white/25 focus.
 const field = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-4 text-[15px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
+const fieldDate = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-3.5 text-[13px] font-medium text-white outline-none transition-colors focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
+const fieldCompact = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-3.5 text-[13.5px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
 const textField = 'box-border min-h-28 w-full min-w-0 resize-y rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-[15px] leading-relaxed text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
 const fileField = 'box-border flex h-12 w-full min-w-0 items-center rounded-2xl border border-white/10 bg-black/35 px-3 text-[12.5px] text-white/70 outline-none transition-colors focus:border-white/25 file:mr-3 file:rounded-full file:border-0 file:bg-white/12 file:px-3.5 file:py-1.5 file:text-[11.5px] file:font-semibold file:text-white'
 const label = 'mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[.14em] text-white/40'
@@ -87,13 +90,25 @@ const primaryCta = 'lens glass-btn relative z-10 flex h-[50px] w-full items-cent
 // Gradient shortcuts: 48px beside the date field, 36px inside a section header.
 const liveAction = 'gradient-live relative z-10 inline-flex h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-[18px] text-[12.5px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
 const livePill = 'gradient-live relative z-10 inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[11px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
+// Ghost family: one size per use — row (32px), tall (36px), form row (48px), block (44px).
 const smallAction = 'glass-btn inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-3 text-[11.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
+const smallActionTall = 'glass-btn inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-3.5 text-[11.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
+const formAction = 'glass-btn inline-flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[12px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
+const blockAction = 'glass-btn inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[12px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
 const chip = 'glass-btn relative z-10 inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[11.5px] font-semibold'
-// Segmented pill: 4px shell, fully rounded active pill.
+// Segmented pill: 4px shell + 40px pill = 48px, exactly the height of the field beside it.
 const segmentShell = 'inline-flex shrink-0 items-center rounded-full bg-black/40 p-1'
-const segmentPill = 'h-9 rounded-full px-3.5 text-[11.5px] font-semibold capitalize transition-colors'
-// Section-header icon chip.
+const segmentPill = 'h-10 rounded-full px-3.5 text-[11.5px] font-semibold capitalize transition-colors'
 const iconTile = 'grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/6 text-white/60'
+
+/** Default start = the next quarter hour, so a class scheduled without touching the picker is not
+    instantly in the past (which used to publish an already-expired meeting). */
+function defaultStartLocal(now = Date.now()): string {
+  const next = new Date(now + 15 * 60_000)
+  next.setSeconds(0, 0)
+  next.setMinutes(Math.ceil(next.getMinutes() / 15) * 15)
+  return toLocalInputValue(next)
+}
 
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return ''
@@ -157,9 +172,11 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
   // Meeting form — one date/time clock, one duration with a Minutes/Hours unit.
   const [editingId, setEditingId] = useState<string | null>(null)
+  // A meeting keeps its own batch while being edited; the batch pills must not silently re-tag it.
+  const [editingBatch, setEditingBatch] = useState<string | null>(null)
   const [meetingFormTitle, setMeetingFormTitle] = useState('')
   const [meetingFormUrl, setMeetingFormUrl] = useState('')
-  const [startLocal, setStartLocal] = useState(() => toLocalInputValue(new Date()))
+  const [startLocal, setStartLocal] = useState(() => defaultStartLocal())
   const [durationValue, setDurationValue] = useState(String(DEFAULT_DURATION_MINUTES))
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('minutes')
 
@@ -179,6 +196,17 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
   const fileInput = useRef<HTMLInputElement | null>(null)
 
   const durationMinutes = toDurationMinutes(durationValue, durationUnit)
+
+  /** Switching unit keeps the same real duration: 45 min -> 0.75 h, 1.5 h -> 90 min. */
+  const changeDurationUnit = (unit: DurationUnit) => {
+    if (unit === durationUnit) return
+    if (unit === 'hours') {
+      setDurationValue(String(Math.round((durationMinutes / 60) * 100) / 100))
+    } else {
+      setDurationValue(String(durationMinutes))
+    }
+    setDurationUnit(unit)
+  }
   const scheduledIso = fromLocalInputValue(startLocal)
 
   // Live badges and countdowns tick without re-fetching anything.
@@ -270,9 +298,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
   const resetMeetingForm = () => {
     setEditingId(null)
+    setEditingBatch(null)
     setMeetingFormTitle('')
     setMeetingFormUrl('')
-    setStartLocal(toLocalInputValue(new Date()))
+    setStartLocal(defaultStartLocal())
     setDurationValue(String(DEFAULT_DURATION_MINUTES))
     setDurationUnit('minutes')
   }
@@ -281,13 +310,19 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
     if (busy) return
     setError(null)
     setStatus(null)
+    // A brand-new class that would already be over is almost always a mis-tap on the date field.
+    const startMs = start ? Date.parse(start) : Date.now()
+    if (!editingId && Number.isFinite(startMs) && startMs + durationMinutes * 60_000 <= Date.now()) {
+      setError('That start time has already passed. Pick a later time, or tap Start Now to go live.')
+      return
+    }
     setBusy(true)
     try {
       const row = await saveMyMeeting({
         id: editingId,
         title: meetingFormTitle,
         meetingUrl: meetingFormUrl,
-        batchName: effectiveBatch,
+        batchName: editingId ? (editingBatch ?? effectiveBatch) : effectiveBatch,
         teacherName,
         scheduledStart: start,
         durationMinutes,
@@ -317,6 +352,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
   const editMeeting = (meeting: LiveMeeting) => {
     setEditingId(meeting.id)
+    setEditingBatch(cleanLine(meeting.batch_name, 80) || effectiveBatch)
     setMeetingFormTitle(meetingTitle(meeting))
     setMeetingFormUrl(meeting.meeting_url ?? '')
     setStartLocal(toLocalInputValue(new Date(meeting.scheduled_start ?? new Date().toISOString())))
@@ -328,7 +364,6 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       setDurationUnit('minutes')
       setDurationValue(String(minutes))
     }
-    if (meeting.batch_name !== effectiveBatch) setSelectedBatch(meeting.batch_name)
     setStatus(null)
     setError(null)
   }
@@ -356,7 +391,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       setStatus('Student Hub link copied')
       say('Student Hub link copied')
     } catch {
-      setError('Could not copy automatically. Use the link shown below.')
+      setError('Could not copy automatically. Use the link in the share card.')
     }
   }
 
@@ -509,7 +544,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       className="space-y-3.5 pb-4"
     >
       {/* ------------------------------------------------------------------ identity + live state */}
-      <header className="px-1">
+      <header>
         <div className="flex items-center justify-between gap-3">
           <p className="flex min-w-0 items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[.16em] text-white/40">
             <GraduationCap size={13} className="shrink-0" />
@@ -525,7 +560,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
       </header>
 
       {/* ------------------------------------------------------------------ batch switcher */}
-      <div role="group" aria-label="Batch" className="no-scrollbar -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 py-0.5">
+      <div role="group" aria-label="Batch" className="no-scrollbar flex items-center gap-1.5 overflow-x-auto py-0.5">
         {batchOptions.map((name) => {
           const active = name === effectiveBatch
           return (
@@ -555,7 +590,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           <span className={iconTile}><Video size={16} /></span>
           <div className="min-w-0 flex-1">
             <h2 id="hub-composer" className="font-display text-[16.5px] font-semibold leading-tight">{editingId ? 'Edit meeting' : 'Schedule a class'}</h2>
-            <p className="mt-0.5 truncate text-[11.5px] text-white/40">{editingId ? 'Update the details below' : `Tagged ${effectiveBatch}`}</p>
+            <p className="mt-0.5 truncate text-[11.5px] text-white/40">{editingId ? `Editing · ${editingBatch ?? effectiveBatch}` : `Tagged ${effectiveBatch}`}</p>
           </div>
           <button type="button" className={livePill} disabled={busy} onClick={() => { void startNow() }}>
             <PlayCircle size={13} /> Go live now
@@ -579,7 +614,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
               <input
                 type="datetime-local"
                 aria-label="Start date and time"
-                className={`${field} min-w-0 flex-1 px-3.5 text-[13px]`}
+                className={`${fieldDate} min-w-0 flex-1`}
                 value={startLocal}
                 onChange={(e) => setStartLocal(e.target.value)}
               />
@@ -608,7 +643,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                     key={unit}
                     type="button"
                     aria-pressed={durationUnit === unit}
-                    onClick={() => setDurationUnit(unit)}
+                    onClick={() => changeDurationUnit(unit)}
                     className={`glass-btn ${segmentPill} ${durationUnit === unit ? 'lens text-white' : 'text-white/45 hover:text-white/75'}`}
                   >
                     {unit}
@@ -640,7 +675,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
               {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editingId ? 'Save changes' : 'Schedule class'}
             </button>
             {editingId && (
-              <button type="button" className={`${smallAction} h-10 w-full`} onClick={resetMeetingForm}>
+              <button type="button" className={blockAction} onClick={resetMeetingForm}>
                 Cancel edit
               </button>
             )}
@@ -715,7 +750,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             <h2 id="hub-share" className="font-display text-[15px] font-semibold leading-tight">Student Hub link</h2>
             <p className="mt-0.5 truncate text-[11px] text-white/35">{studentHubUrl()}</p>
           </div>
-          <button type="button" aria-label="Copy Student Hub Link" onClick={() => { void copyLink() }} className={`${smallAction} h-9 px-3.5`}>
+          <button type="button" aria-label="Copy Student Hub Link" onClick={() => { void copyLink() }} className={smallActionTall}>
             <Copy size={13} /> Copy
           </button>
         </div>
@@ -758,14 +793,14 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           )}
           <form className="flex items-center gap-2" onSubmit={(e) => { void addFolder(e) }}>
             <input
-              className={`${field} h-10 flex-1 px-3.5 text-[13px]`}
+              className={`${fieldCompact} flex-1`}
               aria-label="New folder name"
               maxLength={120}
               value={newFolderName}
               placeholder="New folder name"
               onChange={(e) => setNewFolderName(e.target.value)}
             />
-            <button type="submit" disabled={busy} className={`${smallAction} h-10 px-3.5`}>
+            <button type="submit" disabled={busy} className={formAction}>
               <FolderPlus size={14} /> Add folder
             </button>
           </form>
@@ -786,9 +821,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   type="button"
                   onClick={() => { setKind(id); setFile(null); setBody(''); if (fileInput.current) fileInput.current.value = '' }}
                   aria-pressed={kind === id}
-                  className={`glass-btn relative z-10 flex h-9 items-center justify-center gap-1.5 rounded-full px-1.5 text-[11.5px] font-semibold ${kind === id ? 'lens text-white' : 'text-white/45 hover:text-white/75'}`}
+                  className={`glass-btn relative z-10 flex h-10 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-full px-1 leading-none ${kind === id ? 'lens text-white' : 'text-white/45 hover:text-white/75'}`}
                 >
-                  <Icon size={14} /> {text}
+                  <Icon size={13} />
+                  <span className="whitespace-nowrap text-[10px] font-semibold">{text}</span>
                 </button>
               ))}
             </div>
@@ -912,7 +948,7 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                               disabled={deletingId === note.id}
                               onClick={() => confirmRemove(note)}
                               aria-label={`Delete ${note.title}`}
-                              className="glass-btn grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/30 hover:bg-absent/15 hover:text-red-200 disabled:opacity-40"
+                              className="glass-btn mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/30 hover:bg-absent/15 hover:text-red-200 disabled:opacity-40"
                             >
                               <Trash2 size={13} />
                             </button>
