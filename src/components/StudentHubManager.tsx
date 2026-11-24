@@ -15,7 +15,6 @@ import {
   GraduationCap,
   Link2,
   Loader2,
-  Minus,
   PlayCircle,
   Radio,
   Timer,
@@ -58,7 +57,7 @@ import {
   noteShareUrl,
   safeHttpUrl,
   saveMyMeeting,
-  setHubStudentAccess,
+  decideHubStudent,
   syncHubStudents,
   signedNoteUrl,
   startsInMs,
@@ -71,6 +70,7 @@ import {
   withStartLocalDate,
   UNFILED_FOLDER,
   type DurationUnit,
+  type HubAccessStatus,
   type LiveMeeting,
   type MeetingStatus,
   type StudentFolder,
@@ -217,19 +217,18 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
-  /* Who may open the portal. The roster is republished on every batch change so the student's name
-     picker always matches this list; the allowed flag survives a re-sync. */
-  const [access, setAccess] = useState<Record<string, boolean>>({})
-  // Which batch the access map belongs to. Derived, so the effect never sets state synchronously
-  // and a stale map can never be shown as if it were this batch's.
+  /* Access requests. The roster is republished on every batch change, so a student added on the
+     Students tab can claim their name straight away; the teacher's decisions are never overwritten. */
+  const [access, setAccess] = useState<Record<string, HubAccessStatus>>({})
   const [accessFor, setAccessFor] = useState<string | null>(null)
+  const [busyAccess, setBusyAccess] = useState<string | null>(null)
   const accessReady = accessFor === effectiveBatch
   useEffect(() => {
     let alive = true
     void syncHubStudents(effectiveBatch, teacher.name, batchStudents.map((student) => ({ key: student.id, name: student.name })))
       .then((rows) => {
         if (!alive) return
-        setAccess(Object.fromEntries(rows.map((row) => [row.student_key, row.allowed])))
+        setAccess(Object.fromEntries(rows.map((row) => [row.student_key, row.status])))
         setAccessFor(effectiveBatch)
       })
       .catch((cause) => {
@@ -239,21 +238,36 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       })
     return () => { alive = false }
   }, [effectiveBatch, teacher.name, batchStudents])
-  const allowedCount = batchStudents.filter((student) => access[student.id]).length
 
-  const flipAccess = (studentId: string, name: string) => {
-    const next = !access[studentId]
-    setAccess((prev) => ({ ...prev, [studentId]: next }))
-    void setHubStudentAccess(studentId, next)
+  const statusOf = (studentId: string): HubAccessStatus => access[studentId] ?? 'pending'
+  // Requests first: the queue is the reason this card exists.
+  const orderedStudents = useMemo(
+    () => [...batchStudents].sort((a, b) => Number(statusOf(b.id) === 'pending') - Number(statusOf(a.id) === 'pending')),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [batchStudents, access],
+  )
+  const pendingCount = batchStudents.filter((student) => statusOf(student.id) === 'pending').length
+  const allowedCount = batchStudents.filter((student) => statusOf(student.id) === 'allowed').length
+
+  const decide = (studentId: string, name: string, status: HubAccessStatus) => {
+    const previous = statusOf(studentId)
+    setBusyAccess(studentId)
+    setAccess((prev) => ({ ...prev, [studentId]: status }))
+    void decideHubStudent(studentId, status)
       .then((saved) => {
         setAccess((prev) => ({ ...prev, [studentId]: saved }))
-        setStatus(`${name} ${saved ? 'can now open' : 'can no longer open'} the Student Hub.`)
+        setStatus(saved === 'allowed'
+          ? `${name} approved — they can open the Student Hub now.`
+          : saved === 'blocked'
+            ? `${name} refused. They cannot open the Student Hub.`
+            : `${name} moved back to the waiting list.`)
         setError(null)
       })
       .catch((cause: unknown) => {
-        setAccess((prev) => ({ ...prev, [studentId]: !next }))
-        setError(cloudMessage(cause, 'Could not change this student\'s access.'))
+        setAccess((prev) => ({ ...prev, [studentId]: previous }))
+        setError(cloudMessage(cause, 'Could not save that decision.'))
       })
+      .finally(() => setBusyAccess(null))
   }
 
   const [kind, setKind] = useState<StudentNoteKind>('file')
@@ -667,45 +681,83 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       </div>
 
       {/* ------------------------------------------------------------------ who this batch is
-          The allow switch is the access control for the whole Hub: a name only appears in the
-          student's setup dialog once it is switched on here. */}
+          Access is a request the teacher decides here: a student claims their name in the portal and
+          lands in this queue as "waiting" until it is approved. */}
       <section aria-label={`Students in ${effectiveBatch}`} className="relative z-10 rounded-2xl border border-white/8 bg-white/[.03] px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-white/45">
             <Users size={13} className="shrink-0" />
             <span className="truncate">Students in {effectiveBatch}</span>
           </p>
-          <span className="shrink-0 rounded-full bg-white/6 px-2 py-0.5 text-[11px] font-semibold text-white/55 ring-1 ring-white/10" aria-label={`${allowedCount} of ${batchStudents.length} allowed`}>
-            {batchStudents.length ? `${allowedCount}/${batchStudents.length} allowed` : '0'}
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${pendingCount ? 'bg-amber-400/12 text-amber-200 ring-amber-300/30' : 'bg-white/6 text-white/55 ring-white/10'}`}
+            aria-label={pendingCount ? `${pendingCount} waiting for approval, ${allowedCount} approved` : `${allowedCount} approved`}
+          >
+            {pendingCount ? `${pendingCount} waiting` : `${allowedCount}/${batchStudents.length} approved`}
           </span>
         </div>
         {batchStudents.length ? (
           <>
             <ul className="mt-2.5 space-y-1.5">
-              {batchStudents.map((student) => {
-                const allowed = Boolean(access[student.id])
+              {orderedStudents.map((student) => {
+                const state = statusOf(student.id)
+                const waiting = state === 'pending'
+                const approved = state === 'allowed'
+                const working = busyAccess === student.id
                 return (
-                  <li key={student.id}>
-                    <button
-                      type="button"
-                      aria-pressed={allowed}
-                      aria-label={`${student.name} access`}
-                      onClick={() => flipAccess(student.id, student.name)}
-                      className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors ${allowed ? 'bg-present/10 ring-1 ring-present/25' : 'bg-white/4 ring-1 ring-white/8 hover:bg-white/6'}`}
-                    >
-                      <span aria-hidden className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${allowed ? 'bg-present/25 text-present' : 'bg-white/8 text-white/35'}`}>
-                        {allowed ? <Check size={12} /> : <Minus size={12} />}
+                  <li
+                    key={student.id}
+                    className={`flex min-h-[52px] items-center gap-2.5 rounded-xl px-3 py-2 ring-1 ${approved ? 'bg-present/8 ring-present/22' : waiting ? 'bg-amber-400/8 ring-amber-300/25' : 'bg-white/4 ring-white/8'}`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className={`truncate text-[12.5px] font-semibold ${approved ? 'text-white' : waiting ? 'text-amber-100' : 'text-white/55'}`}>{student.name}</span>
+                        {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/30">#{student.roll}</span> : null}
                       </span>
-                      <span className={`min-w-0 flex-1 truncate text-[12.5px] font-medium ${allowed ? 'text-white' : 'text-white/60'}`}>{student.name}</span>
-                      <span className="shrink-0 text-[10.5px] tabular-nums text-white/30">{student.roll ? `#${student.roll}` : ''}</span>
-                      <span className={`shrink-0 text-[10px] font-bold uppercase tracking-[.08em] ${allowed ? 'text-present' : 'text-white/35'}`}>{allowed ? 'Allowed' : 'Off'}</span>
-                    </button>
+                      <span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] ${approved ? 'text-present' : waiting ? 'text-amber-200' : 'text-white/35'}`}>
+                        {approved ? 'Approved' : waiting ? 'Waiting for you' : 'Refused'}
+                      </span>
+                    </span>
+                    {waiting ? (
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={working}
+                          aria-label={`Approve ${student.name}`}
+                          onClick={() => decide(student.id, student.name, 'allowed')}
+                          className="lens glass-btn flex h-10 items-center gap-1 rounded-full px-3.5 text-[12px] font-semibold text-white disabled:opacity-40"
+                        >
+                          <Check size={13} /> Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={working}
+                          aria-label={`Refuse ${student.name}`}
+                          onClick={() => decide(student.id, student.name, 'blocked')}
+                          className="h-10 shrink-0 rounded-full px-3 text-[12px] font-semibold text-white/45 hover:text-white/70 disabled:opacity-40"
+                        >
+                          Refuse
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={working}
+                        aria-label={`${approved ? 'Revoke' : 'Approve'} ${student.name}`}
+                        onClick={() => decide(student.id, student.name, approved ? 'blocked' : 'allowed')}
+                        className={`h-10 shrink-0 rounded-full px-3.5 text-[12px] font-semibold disabled:opacity-40 ${approved ? 'bg-white/8 text-white/60 hover:text-white' : 'lens glass-btn text-white'}`}
+                      >
+                        {approved ? 'Revoke' : 'Approve'}
+                      </button>
+                    )}
                   </li>
                 )
               })}
             </ul>
             <p className="mt-2 text-[11px] leading-snug text-white/35">
-              {accessReady ? 'Tap a name to let that student into the Student Hub.' : 'Publishing this roster…'}
+              {accessReady
+                ? 'A student picks their name in the Student Hub and appears here as waiting. Approve to let them in.'
+                : 'Publishing this roster…'}
             </p>
           </>
         ) : (

@@ -517,6 +517,29 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .form-error { margin: 0 0 12px; color: #ffd5dc; font-size: 12px; }
 #onboarding-retry { margin-bottom: 12px; }
 .onboarding-submit { width: 100%; padding: 0 16px; }
+/* Waiting for the teacher's approval: the only state where the student has done their part. */
+.onboarding-waiting[hidden] { display: none; }
+.onboarding-waiting { text-align: center; }
+.onboarding-waiting h3 {
+  margin: 12px 0 6px;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 600;
+}
+.onboarding-waiting .onboarding-sub { margin: 0 0 18px; }
+.waiting-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--present);
+  box-shadow: 0 0 0 0 rgba(94, 242, 176, .55);
+  animation: waiting-pulse 1.8s ease-out infinite;
+}
+@keyframes waiting-pulse {
+  70% { box-shadow: 0 0 0 14px rgba(94, 242, 176, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(94, 242, 176, 0); }
+}
 .onboarding-note { margin: 16px 0 0; color: var(--faint); font-size: 11px; text-align: center; }
 
 .live-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
