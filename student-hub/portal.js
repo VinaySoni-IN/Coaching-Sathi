@@ -34,9 +34,7 @@ const els = {
   batchSelect: document.getElementById('batch-select'),
   onboardingError: document.getElementById('onboarding-error'),
   onboardingRetry: document.getElementById('onboarding-retry'),
-  teacherPicker: document.getElementById('teacher-picker'),
-  teacherPickerSub: document.getElementById('teacher-picker-sub'),
-  teacherList: document.getElementById('teacher-list'),
+  teacherSelect: document.getElementById('teacher-select'),
   liveContent: document.getElementById('live-content'),
   syncLabel: document.getElementById('sync-label'),
   syncBanner: document.getElementById('sync-banner'),
@@ -86,7 +84,7 @@ function elem(tag, className = '', text) {
 function formatDate(iso) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 function formatBytes(bytes) {
@@ -255,8 +253,34 @@ function clearOnboardingError() {
   els.onboardingRetry.hidden = true
 }
 
+function teachersForBatch(batch) {
+  // Strictly teachers attached to this student's selected batch — no other batch's teachers.
+  return batch ? state.directory.filter((row) => row.batch === batch) : []
+}
+
+/** The teacher list lives inside the setup dialog and follows the batch, as the student picks it. */
+function fillTeacherOptions(batch, { keepSelection = false } = {}) {
+  if (!els.teacherSelect) return
+  const teachers = teachersForBatch(batch)
+  const previous = keepSelection ? cleanLine(els.teacherSelect.value, 64) : cleanLine(state.teacherId, 64)
+  els.teacherSelect.replaceChildren()
+  const placeholder = document.createElement('option')
+  placeholder.value = ''
+  placeholder.textContent = !batch
+    ? 'Choose your batch first'
+    : teachers.length ? 'Choose your teacher' : 'No teacher listed yet'
+  els.teacherSelect.append(placeholder)
+  teachers.forEach((teacher) => {
+    const option = document.createElement('option')
+    option.value = teacher.id
+    option.textContent = teacher.name
+    els.teacherSelect.append(option)
+  })
+  els.teacherSelect.value = teachers.some((teacher) => teacher.id === previous) ? previous : ''
+  els.teacherSelect.disabled = !batch || !teachers.length
+}
+
 function showOnboarding() {
-  els.teacherPicker.hidden = true
   els.batchSelect.replaceChildren()
   const placeholder = document.createElement('option')
   placeholder.value = ''
@@ -271,6 +295,7 @@ function showOnboarding() {
   els.batchSelect.value = state.batch && state.batches.includes(state.batch) ? state.batch : ''
   els.batchSelect.disabled = state.batches.length === 0
   els.studentName.value = state.studentName
+  fillTeacherOptions(els.batchSelect.value)
   clearOnboardingError()
   if (state.directoryError) {
     // A failed request is not the teacher's fault — offer the same friendly retry, say why.
@@ -294,39 +319,32 @@ function submitOnboarding(event) {
     showOnboardingError('Please choose your batch from the dropdown.', !state.batches.length)
     return
   }
-  state.studentName = name
-  state.batch = batch
-  state.teacherId = ''
-  writeProfile({ name, batch, teacher: '' })
-  els.onboarding.hidden = true
-  clearOnboardingError()
-  renderTeacherPicker()
-}
-
-function renderTeacherPicker() {
-  // Strictly teachers attached to this student's selected batch — no other batch's teachers.
-  state.teachers = state.directory.filter((row) => row.batch === state.batch)
-  renderTopbar()
-  els.teacherPickerSub.textContent = `Teachers for ${state.batch} · ${state.teachers.length} available`
-  els.teacherList.replaceChildren()
-  if (!state.teachers.length) {
-    const empty = elem('div', 'glass empty-card', `No teachers are listed for ${state.batch} yet. Ask your teacher to share a note or start a class, then check back in a moment.`)
-    els.teacherList.append(empty)
-    els.teacherPicker.hidden = false
+  const teachers = teachersForBatch(batch)
+  if (!teachers.length) {
+    // Nothing to scope to yet: say who to ask and let them retry without leaving the dialog.
+    showOnboardingError(`No teacher is listed for ${batch} yet. Ask your teacher to share a note or start a class, then tap Refresh.`, true)
     return
   }
-  state.teachers.forEach((teacher) => {
-    const card = elem('button', 'teacher-card')
-    card.type = 'button'
-    // Every interpolated value is escaped; the rest of the portal uses textContent.
-    card.innerHTML = `<span class="teacher-avatar" aria-hidden="true">${escapeHtml(initials(teacher.name))}</span>` +
-      `<span class="teacher-copy"><strong>${escapeHtml(teacher.name)}</strong><small>${escapeHtml(state.batch)}</small></span>` +
-      '<span class="teacher-arrow" aria-hidden="true">→</span>'
-    card.setAttribute('aria-label', `Choose ${teacher.name}`)
-    card.addEventListener('click', () => chooseTeacher(teacher.id))
-    els.teacherList.append(card)
+  const teacherId = cleanLine(els.teacherSelect ? els.teacherSelect.value : '', 64)
+  const teacher = teachers.find((row) => row.id === teacherId)
+  if (!teacher) {
+    showOnboardingError('Please choose your teacher.')
+    return
+  }
+  state.studentName = name
+  state.batch = batch
+  state.teacherId = teacher.id
+  state.teachers = teachers
+  writeProfile({ name, batch, teacher: teacher.id })
+  els.onboarding.hidden = true
+  clearOnboardingError()
+  renderTopbar()
+  state.loadedOnce = false
+  void loadAll().then(() => {
+    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+      showToast('That note is not available for your batch and teacher.')
+    }
   })
-  els.teacherPicker.hidden = false
 }
 
 function chooseTeacher(id) {
@@ -334,7 +352,6 @@ function chooseTeacher(id) {
   if (!teacher) return
   state.teacherId = teacher.id
   writeProfile({ name: state.studentName, batch: state.batch, teacher: teacher.id })
-  els.teacherPicker.hidden = true
   renderTopbar()
   state.loadedOnce = false
   void loadAll().then(() => {
@@ -888,6 +905,12 @@ function bindControls() {
   els.subjectFilter.addEventListener('change', () => { state.subject = els.subjectFilter.value; renderNotes() })
   els.kindFilter.addEventListener('change', () => { state.kind = els.kindFilter.value; renderNotes() })
   els.onboardingForm.addEventListener('submit', submitOnboarding)
+  // Switching batch rewrites the teacher list on the spot, so the two can never disagree.
+  els.batchSelect.addEventListener('change', () => {
+    fillTeacherOptions(cleanLine(els.batchSelect.value, 80))
+    clearOnboardingError()
+  })
+  if (els.teacherSelect) els.teacherSelect.addEventListener('change', clearOnboardingError)
   els.changeProfile.addEventListener('click', changeProfile)
   els.teacherSwitch.addEventListener('change', () => chooseTeacher(cleanLine(els.teacherSwitch.value, 64)))
   els.onboardingRetry.addEventListener('click', () => {
@@ -955,7 +978,10 @@ async function start() {
       showOnboardingError('Your saved batch is not listed any more. Please choose it again.')
     }
   } else if (!profile.teacher || !state.teachers.some((teacher) => teacher.id === profile.teacher)) {
-    renderTeacherPicker()
+    // Setup is one dialog: a stale or missing teacher simply re-opens it, filled in, with the fix named.
+    state.teacherId = ''
+    showOnboarding()
+    showOnboardingError('Choose your teacher to finish setting up.')
   } else {
     await loadAll()
     if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {

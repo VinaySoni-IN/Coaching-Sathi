@@ -6,10 +6,12 @@ export interface Clock { hour: number; minute: number; meridiem: Meridiem }
 
 /** Half-hour steps: what a coaching class can actually start at. */
 export const MINUTES = [0, 30] as const
+/** Quarter-hour steps, for the Student Hub where classes start at 4:15. */
+export const QUARTER_MINUTES = [0, 15, 30, 45] as const
 export const HOURS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const
 
-/** Reads "6:00 PM", "6 pm", "18:30", "9.30am" … Returns null when there is no readable time. */
-export function parseClock(value: string | undefined | null): Clock | null {
+/** Reads "6:00 PM", "6 pm", "18:30", "9.30am" … Returns the exact minute, no snapping. */
+export function readClock(value: string | undefined | null): Clock | null {
   if (typeof value !== 'string') return null
   const m = value.trim().match(/^(\d{1,2})[:.\s]?(\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?$/i)
   if (!m) return null
@@ -31,7 +33,15 @@ export function parseClock(value: string | undefined | null): Clock | null {
     hour = hour % 12 === 0 ? 12 : hour
   }
   if (hour < 1 || hour > 12) return null
-  // Snap to the nearest half hour so a hand-typed 5:45 still works with the picker.
+  return { hour, minute, meridiem }
+}
+
+/** Same reading, then snapped to the nearest half hour so a hand-typed 5:45 still works. */
+export function parseClock(value: string | undefined | null): Clock | null {
+  const exact = readClock(value)
+  if (!exact) return null
+  const { minute } = exact
+  let { hour, meridiem } = exact
   const snapped = minute < 45 ? (minute < 15 ? 0 : 30) : 0
   if (minute >= 45) {
     // Rounding up can cross noon/midnight, so carry into the hour and flip when needed.

@@ -4,6 +4,7 @@
    All text is trimmed + control-character stripped before it reaches Supabase (see ./sanitize.ts). */
 import { sb } from './cloud'
 import { cleanBody, cleanLine, safeHttpUrl } from './sanitize'
+import { formatClock, readClock } from './clock'
 
 export { cleanBody, cleanLine, safeHttpUrl } from './sanitize'
 
@@ -198,7 +199,35 @@ export function noteShareUrl(noteId: string): string {
   return id ? `${base}?note=${encodeURIComponent(id)}` : base
 }
 
-/** Local <-> ISO helpers for <input type="datetime-local">. */
+/** The composer keeps a "YYYY-MM-DDTHH:mm" string, and shows it as two controls: a date box and a
+    12-hour clock. Both halves are read and written here so no 24-hour text ever reaches the screen. */
+export function startLocalDate(startLocal: string): string {
+  const date = startLocal.slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : toLocalInputValue(new Date()).slice(0, 10)
+}
+
+export function startLocalClock(startLocal: string): string {
+  const hour = Number(startLocal.slice(11, 13))
+  const minute = Number(startLocal.slice(14, 16))
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || startLocal.length < 16) return '5:00 PM'
+  return formatClock({ hour: hour % 12 || 12, minute, meridiem: hour >= 12 ? 'PM' : 'AM' })
+}
+
+export function withStartLocalDate(startLocal: string, date: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return startLocal
+  const time = /^\d{2}:\d{2}$/.test(startLocal.slice(11, 16)) ? startLocal.slice(11, 16) : '17:00'
+  return `${date}T${time}`
+}
+
+export function withStartLocalClock(startLocal: string, clock: string): string {
+  const read = readClock(clock)
+  if (!read) return startLocal
+  const hour24 = (read.hour % 12) + (read.meridiem === 'PM' ? 12 : 0)
+  const time = `${String(hour24).padStart(2, '0')}:${String(read.minute).padStart(2, '0')}`
+  return `${startLocalDate(startLocal)}T${time}`
+}
+
+/** Local <-> ISO helpers for the "YYYY-MM-DDTHH:mm" string the composer stores. */
 export function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`

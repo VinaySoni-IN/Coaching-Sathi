@@ -3,8 +3,8 @@ import type { Clock, Meridiem } from '../lib/clock'
 
 const box = 'h-13 rounded-2xl border border-white/15 bg-white/8 px-2 text-[16px] font-semibold tabular-nums text-white outline-none focus:border-white/45 [color-scheme:dark]'
 
-/** Pre-set class time: hour + half-hour step + an AM/PM switch. Stores the same "6:30 PM" label the app already uses. */
-export default function TimeField({ id = 'bf-time', value, onChange }: { id?: string; value: string; onChange: (next: string) => void }) {
+/** Pre-set class time: hour + minute step + an AM/PM switch. Never a 24-hour field. Stores the same "6:30 PM" label the app already uses. */
+export default function TimeField({ id = 'bf-time', value, onChange, minutes = MINUTES }: { id?: string; value: string; onChange: (next: string) => void; minutes?: readonly number[] }) {
   const current: Clock = parseClock(value) ?? DEFAULT_CLOCK
   const set = (patch: Partial<Clock>) => onChange(formatClock({ ...current, ...patch }))
   return (
@@ -25,7 +25,7 @@ export default function TimeField({ id = 'bf-time', value, onChange }: { id?: st
         onChange={(e) => set({ minute: Number(e.target.value) })}
         className={`${box} w-[4.25rem]`}
       >
-        {MINUTES.map((m) => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
+        {minutes.map((m) => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
       </select>
       <div role="group" aria-label="AM or PM" className="ml-auto grid flex-1 grid-cols-2 gap-1 rounded-full bg-black/40 p-1">
         {(['AM', 'PM'] as Meridiem[]).map((meridiem) => (

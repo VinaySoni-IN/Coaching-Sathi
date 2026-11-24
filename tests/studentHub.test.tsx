@@ -39,6 +39,38 @@ const openHub = async () => {
   await screen.findByRole('heading', { name: 'Student Hub Manager' })
 }
 
+/** The start control is a date box plus a 12-hour picker, never a 24-hour field. */
+const snapToQuarter = (when: Date) => {
+  const d = new Date(when)
+  d.setSeconds(0, 0)
+  d.setMinutes(Math.round(d.getMinutes() / 15) * 15)
+  return d
+}
+
+const startDate = () => (screen.getByLabelText('Start date') as HTMLInputElement).value
+const startHour = () => Number((screen.getByLabelText('Hour') as HTMLSelectElement).value)
+const startMinute = () => Number((screen.getByLabelText('Minute') as HTMLSelectElement).value)
+const startMeridiem = () =>
+  screen.getByRole('button', { name: 'PM' }).getAttribute('aria-pressed') === 'true' ? 'PM' : 'AM'
+
+/** What the three controls currently add up to, as a real date. */
+const readStart = () => {
+  const [y, m, day] = startDate().split('-').map(Number)
+  const hour = (startHour() % 12) + (startMeridiem() === 'PM' ? 12 : 0)
+  return new Date(y, m - 1, day, hour, startMinute())
+}
+
+const setStart = (when: Date) => {
+  const d = snapToQuarter(when)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  fireEvent.change(screen.getByLabelText('Start date'), {
+    target: { value: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` },
+  })
+  fireEvent.change(screen.getByLabelText('Hour'), { target: { value: String(d.getHours() % 12 || 12) } })
+  fireEvent.change(screen.getByLabelText('Minute'), { target: { value: String(d.getMinutes()) } })
+  fireEvent.click(screen.getByRole('button', { name: d.getHours() >= 12 ? 'PM' : 'AM' }))
+}
+
 describe('Student Hub Manager (SH)', () => {
   it('SH-01 adds the Hub icon on the far left, keeps the original three in order, and keeps the default landing screen', async () => {
     render(<App />)
@@ -48,6 +80,22 @@ describe('Student Hub Manager (SH)', () => {
     expect(await screen.findByText('Take Attendance!')).toBeTruthy()
     expect(buttons[0].getAttribute('aria-current')).toBeNull()
     expect(buttons[1].getAttribute('aria-current')).toBe('page')
+  })
+
+  it('SH-29 lists this batch\'s students, and the roster follows the batch pill', async () => {
+    await openHub()
+    // NEET Biology is the seeded first batch: eight students, each with a roll number.
+    const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
+    expect(within(neet).getByText('8')).toBeTruthy()
+    expect(within(neet).getByText('Aarav Sharma')).toBeTruthy()
+    expect(within(neet).getByText('#01')).toBeTruthy()
+    expect(within(neet).queryByText('Arjun Verma')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'JEE Maths' }))
+    const jee = await screen.findByRole('region', { name: 'Students in JEE Maths' })
+    expect(within(jee).getByText('Arjun Verma')).toBeTruthy()
+    expect(within(jee).getByText('7')).toBeTruthy()
+    expect(within(jee).queryByText('Aarav Sharma')).toBeNull()
   })
 
   it('SH-02 copies the relative Student Hub link', async () => {
@@ -61,11 +109,7 @@ describe('Student Hub Manager (SH)', () => {
 
   it('SH-03 schedules a class and lists it with a SCHEDULED badge', async () => {
     await openHub()
-    const later = new Date(Date.now() + 2 * 60 * 60_000)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    fireEvent.change(screen.getByLabelText('Start date and time'), {
-      target: { value: `${later.getFullYear()}-${pad(later.getMonth() + 1)}-${pad(later.getDate())}T${pad(later.getHours())}:${pad(later.getMinutes())}` },
-    })
+    setStart(new Date(Date.now() + 2 * 60 * 60_000))
     fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Physics — Gravitation' } })
     fireEvent.change(screen.getByLabelText('Meeting link'), { target: { value: 'https://meet.google.com/abc-defg-hij' } })
     fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
@@ -259,11 +303,13 @@ describe('Student Hub Manager (SH)', () => {
     expect(read('src/index.css')).toMatch(/@media \(max-width: 380px\)[\s\S]{0,80}\.hub-card/)
 
     await openHub()
-    // The date field is no longer squeezed beside a pill: full width, shortcut underneath.
-    const start = screen.getByLabelText('Start date and time')
+    // The date field is no longer squeezed beside a pill: full width, clock underneath.
+    const start = screen.getByLabelText('Start date')
     expect(start.className).toContain('rounded-2xl')
     expect(start.className).toContain('w-full')
     expect(start.className).not.toContain('flex-1')
+    // The clock sits below the date, not beside it.
+    expect(startDate()).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(screen.getByRole('button', { name: /Set to now/ }).className).toContain('h-12')
   })
 
@@ -303,11 +349,7 @@ describe('Student Hub Manager (SH)', () => {
 
   it('SH-17 refuses a brand-new class whose start time is already over', async () => {
     await openHub()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    const past = new Date(Date.now() - 4 * 60 * 60_000)
-    fireEvent.change(screen.getByLabelText('Start date and time'), {
-      target: { value: `${past.getFullYear()}-${pad(past.getMonth() + 1)}-${pad(past.getDate())}T${pad(past.getHours())}:${pad(past.getMinutes())}` },
-    })
+    setStart(new Date(Date.now() - 4 * 60 * 60_000))
     fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Ghost class' } })
     fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
 
@@ -317,9 +359,12 @@ describe('Student Hub Manager (SH)', () => {
 
   it('SH-18 defaults a new class to a future quarter hour', async () => {
     await openHub()
-    const start = screen.getByLabelText('Start date and time') as HTMLInputElement
-    expect(Date.parse(start.value)).toBeGreaterThan(Date.now())
-    expect(new Date(Date.parse(start.value)).getMinutes() % 15).toBe(0)
+    const when = readStart()
+    expect(when.getTime()).toBeGreaterThan(Date.now())
+    expect(when.getMinutes() % 15).toBe(0)
+    // Quarter-hour steps are offered, so the default is a value the picker can show.
+    const options = Array.from((screen.getByLabelText('Minute') as HTMLSelectElement).options).map((o) => Number(o.value))
+    expect(options).toEqual([0, 15, 30, 45])
   })
 
   it('SH-19 never composes size utilities and keeps every 48px row aligned', () => {
@@ -416,6 +461,37 @@ describe('Student Hub Manager (SH)', () => {
     expect(screen.queryByRole('button', { name: '3h' })).toBeNull()
   })
 
+  it('SH-28 shows every clock time as AM / PM, never a 24-hour one', async () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    // Both formatters pin the hour cycle; a locale hint alone gives "20:30" on a 24-hour device.
+    expect(manager.match(/hour12: true/g)).toHaveLength(2)
+    expect(manager).not.toMatch(/hour: '2-digit', minute: '2-digit' \}/)
+    // The portal parses the same rows and must agree with the app.
+    expect(read('student-hub/sanitize.js')).toContain('hour12: true')
+    expect(read('student-hub/portal.js')).toContain('hour12: true')
+
+    // 8:30 PM, chosen the way a teacher would: date box, hour, minute, PM.
+    const evening = new Date()
+    evening.setDate(evening.getDate() + 1)
+    evening.setHours(20, 30, 0, 0)
+    await openHub()
+    setStart(evening)
+    expect(startHour()).toBe(8)
+    expect(startMinute()).toBe(30)
+    expect(startMeridiem()).toBe('PM')
+    fireEvent.change(screen.getByLabelText('Class title'), { target: { value: 'Evening batch' } })
+    fireEvent.change(screen.getByLabelText('Meeting link'), { target: { value: 'https://meet.google.com/abc-defg-hij' } })
+    fireEvent.click(screen.getByRole('button', { name: /Schedule class/ }))
+
+    const row = (await screen.findByText('Evening batch')).closest('li') as HTMLElement
+    const shown = row.textContent ?? ''
+    expect(shown).toContain('8:30 PM')
+    // The railway clock: an HH:MM with no AM/PM anywhere near it.
+    expect(shown).not.toMatch(/\b([01]?\d|2[0-3]):[0-5]\d\b(?!\s*[AP]M)/)
+    // And the saved row still carries a real ISO instant, not a label.
+    expect(Number.isNaN(Date.parse(fakeMeetingFor('t1')?.scheduled_start ?? ''))).toBe(false)
+  })
+
   it('SH-27 never promises a duration the teacher did not type', async () => {
     await openHub()
     fireEvent.change(screen.getByLabelText('Duration in minutes'), { target: { value: '0' } })
@@ -470,7 +546,7 @@ describe('Student Hub Manager (SH)', () => {
     expect(manager).toMatch(/const primaryCta = '[^']*h-\[56px\][^']*text-\[15\.5px\]/)
 
     await openHub()
-    expect(screen.getByLabelText('Start date and time').className).toContain('text-[16px]')
+    expect(screen.getByLabelText('Start date').className).toContain('text-[16px]')
     expect(screen.getByLabelText('Class title').className).toContain('text-[16px]')
     expect(screen.getByRole('button', { name: /Add to Student Hub/ }).className).toContain('h-[56px]')
   })
@@ -556,7 +632,12 @@ describe('Student Portal and RLS (SP)', () => {
     expect(html).toContain('id="batch-select"')
     expect(html).toContain('id="teacher-switch"')
     expect(html).toContain('Switch Teacher')
-    expect(html).toContain('id="teacher-list"')
+    expect(html).toContain('id="teacher-select"')
+    // Teacher selection is a field inside the one dialog, not a second screen.
+    expect(html).not.toContain('id="teacher-picker"')
+    expect(html).not.toContain('id="teacher-list"')
+    const setupForm = html.slice(html.indexOf('id="onboarding-form"'))
+    expect(setupForm.indexOf('id="teacher-select"')).toBeLessThan(setupForm.indexOf('</form>'))
     expect(html).not.toMatch(/<nav\b/i)
 
     const portal = read('student-hub/portal.js')
@@ -582,7 +663,8 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain("new URLSearchParams(location.search)")
     expect(portal).toContain('Copy share link')
     expect(portal).toContain('folder-group')
-    expect(portal).toContain('escapeHtml(teacher.name)')
+    expect(portal).toContain('function fillTeacherOptions')
+    expect(portal).not.toContain('renderTeacherPicker')
 
     const sanitizer = read('student-hub/sanitize.js')
     expect(sanitizer).toContain('export function escapeHtml')
@@ -656,7 +738,11 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('src/lib/sanitize.ts')).toContain('export function escapeHtml')
     const manager = read('src/components/StudentHubManager.tsx')
     expect(manager).toContain('Scheduled &amp; live meetings')
-    expect(manager).toContain('type="datetime-local"')
+    // No native 24-hour clock: the composer draws a date box and a 12-hour picker instead.
+    expect(manager).not.toContain('type="datetime-local"')
+    expect(manager).toContain('<TimeField')
+    expect(manager).toContain('minutes={QUARTER_MINUTES}')
+    expect(manager).toContain("aria-label=\"Start date\"")
     expect(manager).toContain('Go live now')
     expect(manager).toContain('LIVE NOW')
     expect(manager).toContain('SCHEDULED')
@@ -664,6 +750,29 @@ describe('Student Portal and RLS (SP)', () => {
     expect(manager).toContain('signedNoteUrl')
     expect(read('src/App.tsx')).toContain('batches={state.batches.map')
   })
+  it('SP-06 picks the teacher inside the setup dialog, and the teacher list follows the batch', () => {
+    const html = read('student-hub/index.html')
+    const portal = read('student-hub/portal.js')
+    // One dialog, three fields: name, batch, teacher. Nothing else to step through.
+    expect(html).toContain('aria-label="Teacher"')
+    expect(html).toMatch(/<select id="teacher-select" aria-label="Teacher" required disabled>/)
+    expect(html).toContain('id="onboarding-form"')
+    expect(html).not.toContain('Choose your teacher</h2>')
+
+    // The batch the student picks rewrites the teacher options on the spot.
+    expect(portal).toContain('function fillTeacherOptions')
+    expect(portal).toContain("els.batchSelect.addEventListener('change'")
+    expect(portal).toContain('fillTeacherOptions(els.batchSelect.value)')
+    expect(portal).toContain('fillTeacherOptions(cleanLine(els.batchSelect.value, 80))')
+    // Submitting saves all three at once, and refuses to save a teacher from another batch.
+    expect(portal).toContain('const teachers = teachersForBatch(batch)')
+    expect(portal).toContain("showOnboardingError('Please choose your teacher.')")
+    expect(portal).toContain('writeProfile({ name, batch, teacher: teacher.id })')
+    // A missing teacher re-opens the same dialog instead of a second screen.
+    expect(portal).toContain('Choose your teacher to finish setting up.')
+    expect(portal).not.toContain('teacher-picker')
+  })
+
   it('SP-05 keeps the onboarding card on one left edge with its own padding', () => {
     const css = read('student-hub/styles.css')
     const html = read('student-hub/index.html')
@@ -687,7 +796,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).toContain('.onboarding-card h2 { margin: 0 0 10px; font-size: 27px; }')
 
     // The stylesheet is cache-busted so the phone actually fetches the fix.
-    expect(html).toMatch(/styles\.css\?v=6/)
+    expect(html).toMatch(/styles\.css\?v=7/)
   })
 
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {

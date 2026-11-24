@@ -1,3 +1,4 @@
+import TimeField from './TimeField'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -25,6 +26,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react'
+import { QUARTER_MINUTES } from '../lib/clock'
 import type { Teacher } from '../lib/auth'
 import { cloudMessage } from '../lib/cloud'
 import { cleanLine } from '../lib/sanitize'
@@ -59,7 +61,11 @@ import {
   startsInMs,
   studentHubUrl,
   toDurationMinutes,
+  startLocalClock,
+  startLocalDate,
   toLocalInputValue,
+  withStartLocalClock,
+  withStartLocalDate,
   UNFILED_FOLDER,
   type DurationUnit,
   type LiveMeeting,
@@ -69,10 +75,17 @@ import {
   type StudentNoteKind,
 } from '../lib/studentHub'
 
+export interface RosterBatch {
+  name: string
+  students: { id: string; name: string; roll: string }[]
+}
+
 interface Props {
   teacher: Teacher
   /** Batch names from the Teacher App's local workspace. Every folder/note/meeting is tagged with one. */
   batches: string[]
+  /** The same batches with their students, so the Hub can say who a class is actually for. */
+  roster: RosterBatch[]
   initialBatchName: string
   say: (message: string) => void
   ask: (confirm: Omit<Confirm, 'run'>, run: () => void) => void
@@ -122,13 +135,16 @@ function formatWhen(iso: string | null | undefined): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 function formatClock(iso: string | null | undefined): string {
   if (!iso) return ''
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  // hour12 is a hard constraint, not a locale hint: "20:30" is never acceptable in the Hub.
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 function relativeStart(meeting: LiveMeeting, now: number): string {
@@ -161,7 +177,7 @@ const STATUS_LABEL: Record<MeetingStatus, string> = {
 
 const STATUS_ORDER: Record<MeetingStatus, number> = { live: 0, scheduled: 1, ended: 2 }
 
-export default function StudentHubManager({ teacher, batches, initialBatchName, say, ask }: Props) {
+export default function StudentHubManager({ teacher, batches, roster, initialBatchName, say, ask }: Props) {
   const teacherName = cleanLine(teacher.name, 120)
   const batchOptions = useMemo(() => {
     const names = (batches ?? []).map((name) => cleanLine(name, 80)).filter(Boolean)
@@ -169,6 +185,11 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
   }, [batches])
   const [selectedBatch, setSelectedBatch] = useState(() => cleanLine(initialBatchName, 80) || batchOptions[0] || DEFAULT_BATCH_NAME)
   const effectiveBatch = batchOptions.includes(selectedBatch) ? selectedBatch : batchOptions[0]
+  // The Hub is scoped by batch, so the roster of that batch belongs on the same screen.
+  const batchStudents = useMemo(
+    () => roster.find((row) => row.name === effectiveBatch)?.students ?? [],
+    [roster, effectiveBatch],
+  )
 
   const [loading, setLoading] = useState(true)
   const [teacherId, setTeacherId] = useState<string | null>(null)
@@ -603,6 +624,33 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
         })}
       </div>
 
+      {/* ------------------------------------------------------------------ who this batch is */}
+      <section aria-label={`Students in ${effectiveBatch}`} className="relative z-10 rounded-2xl border border-white/8 bg-white/[.03] px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-white/45">
+            <Users size={13} className="shrink-0" />
+            <span className="truncate">Students in {effectiveBatch}</span>
+          </p>
+          <span className="shrink-0 rounded-full bg-white/6 px-2 py-0.5 text-[11px] font-semibold text-white/55 ring-1 ring-white/10" aria-label={`${batchStudents.length} students`}>
+            {batchStudents.length}
+          </span>
+        </div>
+        {batchStudents.length ? (
+          <ul className="mt-2.5 flex flex-wrap gap-1.5">
+            {batchStudents.map((student) => (
+              <li key={student.id} className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-white/6 px-2.5 text-[12px] font-medium text-white/75 ring-1 ring-white/10">
+                <span className="truncate">{student.name}</span>
+                {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/35">#{student.roll}</span> : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1.5 text-[12px] leading-snug text-white/40">
+            No students in this batch yet. Add them on the Students tab — this is the list the class link gets shared with.
+          </p>
+        )}
+      </section>
+
       {(status || error) && (
         <div className={`relative z-10 flex items-start gap-2 rounded-2xl px-3.5 py-2.5 text-[12.5px] ${error ? 'bg-absent/10 text-red-100 ring-1 ring-absent/25' : 'bg-present/10 text-present ring-1 ring-present/20'}`} role={error ? 'alert' : 'status'}>
           {error ? <AlertCircle size={15} className="mt-0.5 shrink-0" /> : <Check size={15} className="mt-0.5 shrink-0" />}
@@ -636,13 +684,23 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
 
           <div>
             <span className={label}>Start date &amp; time</span>
-            <input
-              type="datetime-local"
-              aria-label="Start date and time"
-              className={fieldDate}
-              value={startLocal}
-              onChange={(e) => setStartLocal(e.target.value)}
-            />
+            {/* A native datetime-local renders the device clock, which is "20:30" on a 24-hour phone
+                and cannot be overridden. A date box plus the 12-hour picker always reads AM / PM. */}
+            <div role="group" aria-label="Start date and time" className="space-y-2.5">
+              <input
+                type="date"
+                aria-label="Start date"
+                className={fieldDate}
+                value={startLocalDate(startLocal)}
+                onChange={(e) => setStartLocal(withStartLocalDate(startLocal, e.target.value))}
+              />
+              <TimeField
+                id="hub-start-time"
+                minutes={QUARTER_MINUTES}
+                value={startLocalClock(startLocal)}
+                onChange={(next) => setStartLocal(withStartLocalClock(startLocal, next))}
+              />
+            </div>
             {/* Only changes the field — so it must not look or read like "Go live now". */}
             <button type="button" className={`${blockAction} mt-2.5`} disabled={busy} onClick={() => setStartLocal(toLocalInputValue(new Date()))}>
               <CalendarClock size={16} /> Set to now
