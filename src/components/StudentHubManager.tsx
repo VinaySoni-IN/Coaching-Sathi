@@ -19,9 +19,11 @@ import {
   Timer,
   Trash2,
   Upload,
+  UploadCloud,
   Users,
   Video,
   WifiOff,
+  X,
 } from 'lucide-react'
 import type { Teacher } from '../lib/auth'
 import { cloudMessage } from '../lib/cloud'
@@ -44,6 +46,7 @@ import {
   formatDurationLabel,
   fromLocalInputValue,
   MAX_DURATION_MINUTES,
+  MAX_NOTE_FILE_SIZE,
   MEETING_DURATION_PRESETS,
   meetingState,
   meetingTitle,
@@ -83,7 +86,6 @@ const field = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10
 const fieldDate = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-3.5 text-[13px] font-medium text-white outline-none transition-colors focus:border-white/25 focus:bg-black/45 [color-scheme:dark]'
 const fieldCompact = 'box-border h-12 w-full min-w-0 rounded-2xl border border-white/10 bg-black/35 px-3.5 text-[13.5px] text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
 const textField = 'box-border min-h-28 w-full min-w-0 resize-y rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-[15px] leading-relaxed text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25 focus:bg-black/45'
-const fileField = 'box-border flex h-12 w-full min-w-0 items-center rounded-2xl border border-white/10 bg-black/35 px-3 text-[12.5px] text-white/70 outline-none transition-colors focus:border-white/25 file:mr-3 file:rounded-full file:border-0 file:bg-white/12 file:px-3.5 file:py-1.5 file:text-[11.5px] file:font-semibold file:text-white'
 const label = 'mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[.14em] text-white/40'
 // Primary CTA: centred, full-width 50px pill.
 const primaryCta = 'lens glass-btn relative z-10 flex h-[50px] w-full items-center justify-center gap-2 rounded-full text-[14.5px] font-semibold disabled:opacity-40'
@@ -193,6 +195,24 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
   const [folderName, setFolderName] = useState('')
   const [newFolderName, setNewFolderName] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [dragging, setDragging] = useState(false)
+
+  /** One path for both the picker and a drop — same 15 MB cap the upload itself enforces. */
+  const pickFile = (picked: File | null) => {
+    if (!picked) return
+    if (picked.size > MAX_NOTE_FILE_SIZE) {
+      // A rejected drop never discards a file that was already chosen.
+      setError('That file is larger than 15 MB.')
+      return
+    }
+    setError(null)
+    setFile(picked)
+  }
+
+  const clearFile = () => {
+    setFile(null)
+    if (fileInput.current) fileInput.current.value = ''
+  }
   const fileInput = useRef<HTMLInputElement | null>(null)
 
   const durationMinutes = toDurationMinutes(durationValue, durationUnit)
@@ -850,17 +870,61 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
           </label>
 
           {kind === 'file' && (
-            <label className="block min-w-0">
-              <span className={label}>Choose a file or PDF</span>
-              <input
-                ref={fileInput}
-                type="file"
-                aria-label="Choose a file or PDF"
-                className={fileField}
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
+            <div className="min-w-0">
+              <span className={label}>Attachment</span>
+              {/* Native pickers cannot be styled: the real input is hidden and this tile drives it. */}
+              <div
+                data-testid="hub-file-drop"
+                onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => { e.preventDefault(); setDragging(false); pickFile(e.dataTransfer.files?.[0] ?? null) }}
+                className={`rounded-2xl border border-dashed transition-colors ${dragging ? 'border-white/40 bg-white/8' : file ? 'border-white/14 bg-black/30' : 'border-white/12 bg-black/25'}`}
+              >
+                <input
+                  ref={fileInput}
+                  id="hub-file-input"
+                  type="file"
+                  aria-label="Add a file or PDF"
+                  className="sr-only"
+                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                />
+                {file ? (
+                  <div className="flex items-center gap-2.5 p-3">
+                    {/* The row itself re-opens the picker; only the remove button is a separate target. */}
+                    <label htmlFor="hub-file-input" className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/8 text-white/75">
+                        <FileText size={16} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-semibold text-white">{file.name}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-white/40">{formatBytes(file.size)} · tap to change</span>
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      aria-label="Remove chosen file"
+                      onClick={clearFile}
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <label htmlFor="hub-file-input" className="flex cursor-pointer items-center gap-3 p-3">
+                    <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full transition-colors ${dragging ? 'bg-white/15 text-white' : 'bg-white/8 text-white/70'}`}>
+                      <UploadCloud size={17} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-semibold text-white">Add a file or PDF</span>
+                      <span className="mt-0.5 block truncate text-[11px] text-white/40">
+                        {dragging ? 'Drop to attach' : 'Tap to browse · or drop it here'}
+                      </span>
+                    </span>
+                  </label>
+                )}
+              </div>
               <span className="mt-1.5 block text-[10.5px] text-white/30">Up to 15 MB · kept in your private teacher folder.</span>
-            </label>
+            </div>
           )}
           {kind === 'link' && (
             <label className="block min-w-0">

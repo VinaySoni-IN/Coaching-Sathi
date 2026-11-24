@@ -81,7 +81,7 @@ describe('Student Hub Manager (SH)', () => {
     await openHub()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Chapter 4 — Gravitation' } })
     fireEvent.change(screen.getByLabelText('Subject tag'), { target: { value: 'Physics' } })
-    const input = screen.getByLabelText('Choose a file or PDF') as HTMLInputElement
+    const input = screen.getByLabelText('Add a file or PDF') as HTMLInputElement
     const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' })
     Object.defineProperty(input, 'files', { configurable: true, value: [file] })
     fireEvent.change(input)
@@ -330,6 +330,54 @@ describe('Student Hub Manager (SH)', () => {
     // Header text and the batch pills sit flush with the card edges.
     expect(manager).not.toContain('<header className="px-1">')
     expect(manager).not.toContain('-mx-1 flex items-center gap-1.5 overflow-x-auto')
+  })
+
+  it('SH-20 replaces the raw browser file input with the designed uploader', async () => {
+    await openHub()
+    const managerSource = read('src/components/StudentHubManager.tsx')
+    const input = screen.getByLabelText('Add a file or PDF') as HTMLInputElement
+    // The real control stays for accessibility and tests, but is never painted.
+    expect(input.type).toBe('file')
+    expect(input.className).toContain('sr-only')
+    expect(read('src/components/StudentHubManager.tsx')).not.toContain('file:mr-3')
+
+    // Designed empty state, not "Choose File / No file chosen".
+    expect(screen.getByText('Add a file or PDF')).toBeTruthy()
+    expect(screen.getByText(/Tap to browse/)).toBeTruthy()
+    // No painted native control: the old "Choose File / No file chosen" chrome is gone.
+    expect(screen.queryByText('No file chosen')).toBeNull()
+    expect(managerSource).not.toContain('file:mr-3')
+
+    const file = new File(['%PDF-1.4'], 'chapter-4-gravitation.pdf', { type: 'application/pdf' })
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] })
+    fireEvent.change(input)
+
+    // Chosen state shows the file, its size and a Change affordance wired to the same input.
+    expect(await screen.findByText('chapter-4-gravitation.pdf')).toBeTruthy()
+    expect(screen.getByText(/tap to change/)).toBeTruthy()
+    // The whole chosen row re-opens the picker.
+    expect(screen.getByText('chapter-4-gravitation.pdf').closest('label')?.getAttribute('for')).toBe('hub-file-input')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove chosen file' }))
+    expect(screen.queryByText('chapter-4-gravitation.pdf')).toBeNull()
+    expect(screen.getByText('Add a file or PDF')).toBeTruthy()
+  })
+
+  it('SH-21 attaches a dropped file and refuses one over the 15 MB cap', async () => {
+    await openHub()
+    const zone = screen.getByTestId('hub-file-drop')
+
+    const dropped = new File(['notes'], 'gravitation-notes.pdf', { type: 'application/pdf' })
+    fireEvent.drop(zone, { dataTransfer: { files: [dropped] } })
+    expect(await screen.findByText('gravitation-notes.pdf')).toBeTruthy()
+
+    const big = new File(['x'], 'huge.pdf', { type: 'application/pdf' })
+    Object.defineProperty(big, 'size', { configurable: true, value: 16 * 1024 * 1024 })
+    fireEvent.drop(zone, { dataTransfer: { files: [big] } })
+    expect(await screen.findByText(/larger than 15 MB/i)).toBeTruthy()
+    expect(screen.queryByText('huge.pdf')).toBeNull()
+    // The previously chosen file survives a rejected drop.
+    expect(screen.getByText('gravitation-notes.pdf')).toBeTruthy()
   })
 })
 
