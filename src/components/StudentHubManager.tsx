@@ -841,10 +841,10 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
                   type="button"
                   onClick={() => { setKind(id); setFile(null); setBody(''); if (fileInput.current) fileInput.current.value = '' }}
                   aria-pressed={kind === id}
-                  className={`glass-btn relative z-10 flex h-10 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-full px-1 leading-none ${kind === id ? 'lens text-white' : 'text-white/45 hover:text-white/75'}`}
+                  className={`glass-btn relative z-10 flex h-10 items-center justify-center gap-1 overflow-hidden rounded-full px-1 leading-none ${kind === id ? 'lens text-white' : 'text-white/45 hover:text-white/75'}`}
                 >
-                  <Icon size={13} />
-                  <span className="whitespace-nowrap text-[10px] font-semibold">{text}</span>
+                  <Icon size={12} className="shrink-0" />
+                  <span className="whitespace-nowrap text-[10.5px] font-semibold">{text}</span>
                 </button>
               ))}
             </div>
