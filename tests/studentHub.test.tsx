@@ -379,6 +379,30 @@ describe('Student Hub Manager (SH)', () => {
     expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
   })
 
+  it('SH-25 renders the Hub flat: hairlines only, no cast shadows', async () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    const css = read('src/index.css')
+
+    // The whole view opts into the flat surface.
+    expect(manager).toContain('className="hub-flat space-y-3.5 pb-4"')
+
+    // Cards, the primary CTA (.lens) and the gradient pill lose their cast shadow and glow.
+    const card = css.match(/\.hub-flat \.hub-card \{([^}]*)\}/)
+    expect(card?.[1]).toContain('inset 0 1px 0')
+    expect(card?.[1]).not.toMatch(/0 22px 48px/)
+    const lens = css.match(/\.hub-flat \.lens \{([^}]*)\}/)
+    expect(lens?.[1]).not.toMatch(/0 6px 20px/)
+    const live = css.match(/\.hub-flat \.gradient-live \{([^}]*)\}/)
+    expect(live?.[1]).not.toMatch(/0 10px 26px/)
+
+    // Any shadow-* utility that appears inside the Hub later is flattened as well.
+    expect(css).toContain('.hub-flat [class*="shadow-"]')
+
+    await openHub()
+    const section = document.querySelector('.hub-flat')
+    expect(section).toBeTruthy()
+  })
+
   it('SH-24 keeps fields at 16px and every tap target thumb-sized', async () => {
     const manager = read('src/components/StudentHubManager.tsx')
     // iOS Safari zooms the page when a focused field is under 16px, which makes the form feel
