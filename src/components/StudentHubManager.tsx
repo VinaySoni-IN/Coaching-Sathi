@@ -90,8 +90,9 @@ const label = 'mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[.14e
 // Primary CTA: centred, full-width 50px pill.
 const primaryCta = 'lens glass-btn relative z-10 flex h-[50px] w-full items-center justify-center gap-2 rounded-full text-[14.5px] font-semibold disabled:opacity-40'
 // Gradient shortcuts: 48px beside the date field, 36px inside a section header.
+// One gradient pill, one size: both live actions (header + Start Now) use this, so they never
+// read as two different weights of the same button.
 const liveAction = 'gradient-live relative z-10 inline-flex h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-[18px] text-[12.5px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
-const livePill = 'gradient-live relative z-10 inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[11px] font-bold text-[#07100c] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-45'
 // Ghost family: one size per use — row (32px), tall (36px), form row (48px), block (44px).
 const smallAction = 'glass-btn inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-3 text-[11.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
 const smallActionTall = 'glass-btn inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-white/6 px-3.5 text-[11.5px] font-semibold text-white/60 transition-colors hover:bg-white/12 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35 disabled:opacity-40'
@@ -612,8 +613,8 @@ export default function StudentHubManager({ teacher, batches, initialBatchName, 
             <h2 id="hub-composer" className="font-display text-[16.5px] font-semibold leading-tight">{editingId ? 'Edit meeting' : 'Schedule a class'}</h2>
             <p className="mt-0.5 truncate text-[11.5px] text-white/40">{editingId ? `Editing · ${editingBatch ?? effectiveBatch}` : `Tagged ${effectiveBatch}`}</p>
           </div>
-          <button type="button" className={livePill} disabled={busy} onClick={() => { void startNow() }}>
-            <PlayCircle size={13} /> Go live now
+          <button type="button" className={liveAction} disabled={busy} onClick={() => { void startNow() }}>
+            <PlayCircle size={15} /> Go live now
           </button>
         </div>
 

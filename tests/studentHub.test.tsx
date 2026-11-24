@@ -363,6 +363,16 @@ describe('Student Hub Manager (SH)', () => {
     expect(screen.getByText('Add a file or PDF')).toBeTruthy()
   })
 
+  it('SH-23 uses one large gradient pill for both live actions', () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    // A second, smaller gradient token is how "Go live now" drifted away from "Start Now".
+    expect(manager).not.toContain('const livePill')
+    expect(manager.match(/gradient-live relative/g)?.length).toBe(1)
+    expect(manager.match(/className=\{liveAction\}/g)?.length).toBe(2)
+    // Both are 48px: the header pill matches the Start Now pill and the fields beside it.
+    expect(manager).toMatch(/const liveAction = '[^']*h-12 /)
+  })
+
   it('SH-22 keeps every material-type label on one line beside its icon', async () => {
     await openHub()
     for (const name of ['File / PDF', 'Link', 'Text note']) {
