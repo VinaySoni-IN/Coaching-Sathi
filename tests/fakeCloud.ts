@@ -53,12 +53,33 @@ interface NoteRow {
 }
 interface StoredFile { path: string; name: string; size: number; type: string }
 interface HubStudentRow {
+  id: string
   teacher_id: string
+  full_name: string
   batch_name: string
-  teacher_name: string
-  student_key: string
-  short_name: string
-  status: 'pending' | 'allowed' | 'blocked'
+  device_token: string | null
+  is_activated: boolean
+  last_seen_at: string | null
+  access_status: 'active' | 'paid' | 'suspended' | 'unpaid'
+  created_at: string
+}
+interface MagicLinkRow {
+  id: string
+  student_id: string
+  teacher_id: string
+  token: string
+  is_used: boolean
+  used_at: string | null
+  created_at: string
+}
+interface ActivityRow {
+  id: string
+  student_id: string
+  teacher_id: string
+  activity_type: 'note_opened' | 'class_attended'
+  reference_id: string | null
+  reference_title: string
+  created_at: string
 }
 
 const db = {
@@ -71,6 +92,9 @@ const db = {
   folders: [] as FolderRow[],
   notes: [] as NoteRow[],
   hubStudents: [] as HubStudentRow[],
+  magicLinks: [] as MagicLinkRow[],
+  activity: [] as ActivityRow[],
+  hubSeq: 0,
   files: new Map<string, StoredFile>(),
   seq: 0,
   noteSeq: 0,
@@ -92,6 +116,9 @@ export function resetFakeCloud() {
   db.folders = []
   db.notes = []
   db.hubStudents = []
+  db.magicLinks = []
+  db.activity = []
+  db.hubSeq = 0
   db.files.clear()
   db.seq = 0
   db.noteSeq = 0
@@ -315,36 +342,6 @@ const storageFrom = (bucket: string) => ({
     return { data: { path }, error: null }
   },
   remove: async (paths: string[]) => {
-    // Anon-safe: the setup dialog lists allowed classmates before any session exists.
-    if (name === 'student_hub_classmates') {
-      const batch = clean(args.p_batch_name, 80)
-      if (!batch) return err('invalid student hub scope', '22023')
-      const rows = db.hubStudents
-        .filter((row) => row.batch_name === batch && row.status !== 'blocked')
-        .sort((a, b) => a.short_name.localeCompare(b.short_name))
-        .map((row) => ({
-          teacher_id: row.teacher_id,
-          teacher_name: row.teacher_name,
-          student_key: row.student_key,
-          short_name: row.short_name,
-          status: row.status,
-        }))
-      return { data: rows, error: null }
-    }
-    if (name === 'student_hub_request_access') {
-      const teacherId = clean(args.p_teacher_id, 64)
-      const key = clean(args.p_student_key, 64)
-      const row = db.hubStudents.find((entry) => entry.teacher_id === teacherId && entry.student_key === key)
-      if (!row) return err('this name is not on the list any more', '22023')
-      if (row.status !== 'allowed') row.status = 'pending'
-      return { data: row.status, error: null }
-    }
-    if (name === 'student_hub_student_status') {
-      const teacherId = clean(args.p_teacher_id, 64)
-      const key = clean(args.p_student_key, 64)
-      const row = db.hubStudents.find((entry) => entry.teacher_id === teacherId && entry.student_key === key)
-      return { data: row ? row.status : null, error: null }
-    }
     const me = currentUser()
     if (!me) return err('not authenticated', '28000')
     paths.forEach((path) => { if (path.startsWith(`${me.id}/`)) db.files.delete(path) })
@@ -420,21 +417,120 @@ export const fakeCloud = {
   from,
   storage: { from: storageFrom },
   rpc: async (name: string, args: Record<string, unknown> = {}) => {
-    // The snapshot RPC is intentionally anon-safe and read-only: no session required.
-    if (name === 'student_hub_snapshot') {
-      const batch = clean(args.p_batch_name, 80)
-      const teacherId = clean(args.p_teacher_id, 64)
-      if (!batch || !teacherId) return err('invalid student hub scope', '22023')
-      const meeting = [...db.meetings.values()].find((row) => row.teacher_id === teacherId && row.batch_name === batch && row.is_live) ?? null
+    // --- The only content path: a device token in, that student's own batch out. ---
+    if (name === 'get_student_batch_data') {
+      const token = clean(args.p_device_token, 200)
+      const student = token ? db.hubStudents.find((entry) => entry.device_token === token) : undefined
+      if (!student) return { data: { error: 'Unauthorized or inactive batch access' }, error: null }
+      if (student.access_status !== 'active' && student.access_status !== 'paid') {
+        return { data: { error: 'Batch access paused. Please contact your teacher.' }, error: null }
+      }
+      student.last_seen_at = stampNow()
+      const teacher = db.profiles.get(student.teacher_id)
+      const inBatch = (row: { batch_name: string; teacher_id: string }) =>
+        row.teacher_id === student.teacher_id
+        && row.batch_name.trim().toLowerCase() === student.batch_name.trim().toLowerCase()
       return {
         data: {
-          meeting,
-          folders: db.folders.filter((row) => row.teacher_id === teacherId && row.batch_name === batch),
-          notes: db.notes.filter((row) => row.teacher_id === teacherId && row.batch_name === batch),
+          student_id: student.id,
+          full_name: student.full_name,
+          batch_name: student.batch_name,
+          teacher_id: student.teacher_id,
+          teacher_name: teacher?.name || 'Your teacher',
+          access_status: student.access_status,
+          meetings: db.meetings.filter(inBatch),
+          folders: db.folders.filter(inBatch),
+          notes: db.notes.filter(inBatch),
         },
         error: null,
       }
     }
+    if (name === 'get_single_student_note') {
+      const token = clean(args.p_device_token, 200)
+      const student = token ? db.hubStudents.find((entry) => entry.device_token === token) : undefined
+      if (!student) return { data: { error: 'Unauthorized or inactive batch access' }, error: null }
+      if (student.access_status !== 'active' && student.access_status !== 'paid') {
+        return { data: { error: 'Batch access paused. Please contact your teacher.' }, error: null }
+      }
+      const note = db.notes.find((entry) => entry.id === String(args.p_note_id ?? ''))
+      if (!note
+        || note.teacher_id !== student.teacher_id
+        || note.batch_name.trim().toLowerCase() !== student.batch_name.trim().toLowerCase()) {
+        return { data: { error: 'Access Denied · This note belongs to another batch.' }, error: null }
+      }
+      return { data: { note }, error: null }
+    }
+
+    // --- Student-side RPCs: anon by design, keyed by the secret itself, never by a name. ---
+    if (name === 'redeem_magic_link') {
+      const token = clean(args.p_token, 128)
+      if (!token) return { data: { error: 'Invalid or already used magic link' }, error: null }
+      const link = db.magicLinks.find((entry) => entry.token === token && !entry.is_used)
+      if (!link) return { data: { error: 'Invalid or already used magic link' }, error: null }
+      link.is_used = true
+      link.used_at = stampNow()
+      const student = db.hubStudents.find((entry) => entry.id === link.student_id)
+      if (!student) return { data: { error: 'Invalid or already used magic link' }, error: null }
+      student.device_token = `device-${student.id}-${db.seq + 1}`.repeat(2)
+      student.is_activated = true
+      student.last_seen_at = stampNow()
+      const teacher = db.profiles.get(student.teacher_id)
+      return {
+        data: {
+          student_id: student.id,
+          device_token: student.device_token,
+          full_name: student.full_name,
+          batch_name: student.batch_name,
+          teacher_id: student.teacher_id,
+          teacher_name: teacher?.name || 'Your teacher',
+        },
+        error: null,
+      }
+    }
+    if (name === 'verify_student_session') {
+      const token = clean(args.p_device_token, 200)
+      const student = token ? db.hubStudents.find((entry) => entry.device_token === token) : undefined
+      if (!student) return { data: { error: 'Ask your teacher for a new magic link.' }, error: null }
+      student.last_seen_at = stampNow()
+      const teacher = db.profiles.get(student.teacher_id)
+      return {
+        data: {
+          student_id: student.id,
+          device_token: student.device_token,
+          full_name: student.full_name,
+          batch_name: student.batch_name,
+          teacher_id: student.teacher_id,
+          teacher_name: teacher?.name || 'Your teacher',
+          access_status: student.access_status,
+        },
+        error: null,
+      }
+    }
+    if (name === 'log_student_activity') {
+      const token = clean(args.p_device_token, 200)
+      const student = token ? db.hubStudents.find((entry) => entry.device_token === token) : undefined
+      if (!student) return { data: { error: 'unknown device' }, error: null }
+      const type = clean(args.p_type, 20)
+      if (type !== 'note_opened' && type !== 'class_attended') return { data: { error: 'unknown activity' }, error: null }
+      student.last_seen_at = stampNow()
+      const refId = clean(args.p_ref_id, 64) || null
+      const recent = db.activity.find((entry) => entry.student_id === student.id
+        && entry.activity_type === type
+        && entry.reference_id === refId
+        && Date.now() - Date.parse(entry.created_at) < 5 * 60_000)
+      if (recent) return { data: { ok: true, duplicate: true }, error: null }
+      db.activity.push({
+        id: `activity-${db.activity.length + 1}`,
+        student_id: student.id,
+        teacher_id: student.teacher_id,
+        activity_type: type,
+        reference_id: refId,
+        reference_title: clean(args.p_ref_title, 160),
+        created_at: stampNow(),
+      })
+      return { data: { ok: true, duplicate: false }, error: null }
+    }
+
     const me = currentUser()
     if (!me) return err('not authenticated', '28000')
     if (name === 'email_taken') {
@@ -598,45 +694,99 @@ export const fakeCloud = {
       db.notes.forEach((note) => { if (note.folder_id === id) { note.folder_id = null; note.folder_name = null } })
       return { data: true, error: null }
     }
-    if (name === 'sync_my_hub_students') {
+    if (name === 'sync_my_students') {
       const batch = clean(args.p_batch_name, 80)
-      const teacherName = clean(args.p_teacher_name, 120)
       if (!batch) return err('choose a batch first', '22023')
-      const list = Array.isArray(args.p_students) ? (args.p_students as { key?: string; short?: string }[]) : []
-      const keep: string[] = []
+      const list = Array.isArray(args.p_students) ? (args.p_students as { name?: string }[]) : []
+      const names: string[] = []
       for (const item of list) {
-        const key = clean(item.key, 64)
-        const short = clean(item.short, 40)
-        if (!key || !short) continue
-        keep.push(key)
-        const row = db.hubStudents.find((entry) => entry.teacher_id === me.id && entry.student_key === key)
-        if (row) {
-          // The teacher's decision is preserved: a re-sync never silently opens access.
-          row.batch_name = batch
-          row.teacher_name = teacherName
-          row.short_name = short
-        } else {
-          db.hubStudents.push({ teacher_id: me.id, batch_name: batch, teacher_name: teacherName, student_key: key, short_name: short, status: 'pending' })
+        const full = clean(item.name, 120)
+        if (!full) continue
+        names.push(full)
+        const row = db.hubStudents.find((entry) => entry.teacher_id === me.id
+          && entry.batch_name === batch && entry.full_name === full)
+        if (!row) {
+          db.hubSeq += 1
+          db.hubStudents.push({
+            id: `student-${db.hubSeq}`,
+            teacher_id: me.id,
+            full_name: full,
+            batch_name: batch,
+            device_token: null,
+            is_activated: false,
+            last_seen_at: null,
+            access_status: 'active',
+            created_at: stampNow(),
+          })
         }
       }
-      // Scoped to this batch: syncing another batch must never wipe this roster.
-      db.hubStudents = db.hubStudents.filter((row) => row.teacher_id !== me.id || row.batch_name !== batch || keep.includes(row.student_key))
+      // Only the names just published come back: a renamed student reads as a new, unlinked row.
       return {
         data: db.hubStudents
-          .filter((row) => row.teacher_id === me.id)
-          .sort((a, b) => a.short_name.localeCompare(b.short_name))
-          .map((row) => ({ student_key: row.student_key, short_name: row.short_name, status: row.status })),
+          .filter((row) => row.teacher_id === me.id && row.batch_name === batch && names.includes(row.full_name))
+          .sort((a, b) => a.full_name.localeCompare(b.full_name))
+          .map((row) => ({
+            student_id: row.id,
+            full_name: row.full_name,
+            is_activated: row.is_activated,
+            has_active_link: db.magicLinks.some((link) => link.student_id === row.id && !link.is_used),
+            last_seen_at: row.last_seen_at,
+            access_status: row.access_status,
+          })),
         error: null,
       }
     }
-    if (name === 'decide_my_hub_student') {
-      const key = clean(args.p_student_key, 64)
-      const status = clean(args.p_status, 12)
-      if (!['pending', 'allowed', 'blocked'].includes(status)) return err('unknown access state', '22023')
-      const row = db.hubStudents.find((entry) => entry.teacher_id === me.id && entry.student_key === key)
-      if (!row) return err('this student is not in your roster yet', '22023')
-      row.status = status as HubStudentRow['status']
-      return { data: row.status, error: null }
+    if (name === 'generate_magic_link') {
+      const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
+      if (!row) return err('this student is not on your roster', '22023')
+      // Single use is enforced by invalidating whatever was outstanding.
+      db.magicLinks.forEach((link) => {
+        if (link.student_id === row.id && !link.is_used) { link.is_used = true; link.used_at = stampNow() }
+      })
+      const token = `${String(db.magicLinks.length + 1).padStart(2, '0')}${'a1b2c3d4e5f6'.repeat(6)}`.slice(0, 64)
+      db.magicLinks.push({
+        id: `link-${db.magicLinks.length + 1}`,
+        student_id: row.id,
+        teacher_id: me.id,
+        token,
+        is_used: false,
+        used_at: null,
+        created_at: stampNow(),
+      })
+      return { data: token, error: null }
+    }
+    if (name === 'reset_student_device') {
+      const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
+      if (!row) return err('this student is not on your roster', '22023')
+      row.device_token = null
+      row.is_activated = false
+      db.magicLinks.forEach((link) => {
+        if (link.student_id === row.id && !link.is_used) { link.is_used = true; link.used_at = stampNow() }
+      })
+      return { data: true, error: null }
+    }
+    if (name === 'set_student_access') {
+      const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
+      if (!row) return err('this student is not on your roster', '22023')
+      const status = clean(args.p_status, 20)
+      if (!['active', 'paid', 'suspended', 'unpaid'].includes(status)) return err('unknown access state', '22023')
+      row.access_status = status as HubStudentRow['access_status']
+      return { data: status, error: null }
+    }
+    if (name === 'my_student_activity') {
+      const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
+      if (!row) return err('this student is not on your roster', '22023')
+      return {
+        data: db.activity
+          .filter((entry) => entry.student_id === row.id)
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .map((entry) => ({
+            activity_type: entry.activity_type,
+            reference_title: entry.reference_title,
+            created_at: entry.created_at,
+          })),
+        error: null,
+      }
     }
     if (name === 'delete_me') {
       db.touched = true
@@ -646,6 +796,8 @@ export const fakeCloud = {
       db.folders = db.folders.filter((folder) => folder.teacher_id !== me.id)
       db.notes = db.notes.filter((note) => note.teacher_id !== me.id)
       db.hubStudents = db.hubStudents.filter((row) => row.teacher_id !== me.id)
+      db.magicLinks = db.magicLinks.filter((link) => link.teacher_id !== me.id)
+      db.activity = db.activity.filter((entry) => entry.teacher_id !== me.id)
       for (const path of [...db.files.keys()]) if (path.startsWith(`${me.id}/`)) db.files.delete(path)
       db.users = db.users.filter((u) => u.id !== me.id)
       db.session = null
@@ -704,6 +856,8 @@ export const fakeMeetingFor = (userId: string) => db.meetings.find((meeting) => 
 export const fakeMeetingsFor = (userId: string) => db.meetings.filter((meeting) => meeting.teacher_id === userId)
 /** The roster projection the portal reads: short names + the teacher's allow flag. */
 export const fakeHubStudentsFor = (userId: string) => db.hubStudents.filter((row) => row.teacher_id === userId)
+export const fakeMagicLinksFor = (userId: string) => db.magicLinks.filter((link) => link.teacher_id === userId)
+export const fakeActivityFor = (userId: string) => db.activity.filter((entry) => entry.teacher_id === userId)
 export const fakeNotesFor = (userId: string) => db.notes.filter((note) => note.teacher_id === userId)
 export const fakeFoldersFor = (userId: string) => db.folders.filter((folder) => folder.teacher_id === userId)
 export const fakeSnapshotFor = (userId: string, batch: string) => ({

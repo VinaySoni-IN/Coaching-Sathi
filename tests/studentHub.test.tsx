@@ -3,12 +3,15 @@ import { resolve } from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import App from '../src/App'
-import { shortStudentName } from '../src/lib/studentHub'
+import { lastSeenLabel, linkStateOf, magicLinkUrl } from '../src/lib/studentHub'
+import { sb } from '../src/lib/cloud'
 import { dataKeyFor } from '../src/lib/auth'
 import { seedJson } from '../src/lib/store'
 import {
+  fakeActivityFor,
   fakeFoldersFor,
   fakeHubStudentsFor,
+  fakeMagicLinksFor,
   fakeMeetingFor,
   fakeMeetingsFor,
   fakeNotesFor,
@@ -88,7 +91,7 @@ describe('Student Hub Manager (SH)', () => {
     await openHub()
     // NEET Biology is the seeded first batch: eight students, each with a roll number.
     const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
-    expect(await within(neet).findByText('8 waiting')).toBeTruthy()
+    expect(await within(neet).findByText('0/8 linked')).toBeTruthy()
     expect(within(neet).getByText('Aarav Sharma')).toBeTruthy()
     expect(within(neet).getByText('#01')).toBeTruthy()
     expect(within(neet).queryByText('Arjun Verma')).toBeNull()
@@ -96,7 +99,7 @@ describe('Student Hub Manager (SH)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'JEE Maths' }))
     const jee = await screen.findByRole('region', { name: 'Students in JEE Maths' })
     expect(within(jee).getByText('Arjun Verma')).toBeTruthy()
-    expect(await within(jee).findByText('7 waiting')).toBeTruthy()
+    expect(await within(jee).findByText('0/7 linked')).toBeTruthy()
     expect(within(jee).queryByText('Aarav Sharma')).toBeNull()
   })
 
@@ -599,13 +602,17 @@ describe('Student Portal and RLS (SP)', () => {
     const portal = read('student-hub/portal.js')
     expect(portal).toContain("const CONFIG_URL = './config.json'")
     expect(portal).toContain('fetch(CONFIG_URL')
-    expect(portal).toContain(".from('live_meetings')")
-    expect(portal).toContain(".from('student_notes')")
-    expect(portal).toContain(".from('notes')")
+    // Not "scoped reads" any more: no table reads at all. anon has no SELECT to use them with.
+    expect(portal).not.toContain('.from(')
+    expect(portal).toContain("client.rpc('get_student_batch_data'")
+    expect(portal).toContain("client.rpc('get_single_student_note'")
     expect(portal).toContain('No scheduled classes right now')
     expect(portal).toContain('Join Now')
     expect(portal).toContain('postgres_changes')
-    expect(portal).not.toMatch(/\.(insert|update|delete|upsert)\s*\(/)
+    // No table writes anywhere. (searchParams.delete() is URL cleanup, not a row delete.)
+    expect(portal).not.toMatch(/\.(insert|upsert)\s*\(/)
+    expect(portal).not.toMatch(/\.update\s*\(/)
+    expect(portal).not.toMatch(/\.from\([^)]*\)\s*\n?\s*\.delete\s*\(/)
     expect(portal).not.toMatch(/\.auth\./)
     expect(portal).not.toMatch(/service_role/)
     expect(portal).not.toContain('getPublicUrl')
@@ -623,88 +630,175 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v20')
+    expect(read('public/sw.js')).toContain('coachsathi-v21')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
-  it('SH-30 students land in a waiting queue and only an approval lets them in', async () => {
-    // "Vinay Soni" -> "Vinay S.": the portal is never given a full name.
-    expect(shortStudentName('Vinay Soni')).toBe('Vinay S.')
-    expect(shortStudentName('  aarav   kumar  sharma ')).toBe('Aarav S.')
-    expect(shortStudentName('Aarav')).toBe('Aarav')
-    expect(shortStudentName('   ')).toBe('')
+  it('SH-30 one single-use link per student, and a drawer that shows what they opened', async () => {
+    // The labels are pure functions, so they are pinned before any rendering.
+    expect(lastSeenLabel(null)).toBe('Not opened yet')
+    expect(lastSeenLabel(new Date(Date.now() - 30_000).toISOString())).toBe('Online now')
+    expect(lastSeenLabel(new Date(Date.now() - 4 * 60_000).toISOString())).toBe('Last seen 4 min ago')
+    expect(lastSeenLabel(new Date(Date.now() - 3 * 3_600_000).toISOString())).toBe('Last seen 3 hr ago')
+    expect(linkStateOf(undefined)).toBe('no_link')
+    expect(linkStateOf({ is_activated: false, has_active_link: true })).toBe('active_link')
+    expect(linkStateOf({ is_activated: true, has_active_link: true })).toBe('device_linked')
+    expect(magicLinkUrl('abc123').endsWith('/student-hub/?token=abc123')).toBe(true)
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
 
     await openHub()
-    // The roster is published as SHORT names, and nobody is approved yet.
+    const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
+    // The roster is published to the database by name; nobody has a phone linked yet.
     await waitFor(() => expect(fakeHubStudentsFor('t1')).toHaveLength(8))
-    expect(fakeHubStudentsFor('t1').every((row) => row.status === 'pending')).toBe(true)
-    expect(fakeHubStudentsFor('t1').map((row) => row.short_name)).toContain('Aarav S.')
-    expect(fakeHubStudentsFor('t1').some((row) => row.short_name.includes('Sharma'))).toBe(false)
-    expect(await screen.findByText('8 waiting')).toBeTruthy()
+    expect(fakeHubStudentsFor('t1').every((row) => row.is_activated === false)).toBe(true)
+    expect(fakeHubStudentsFor('t1').every((row) => row.device_token === null)).toBe(true)
+    expect(await within(neet).findByText('0/8 linked')).toBeTruthy()
 
-    // The portal's claim puts a row in the queue; the teacher then approves it here.
-    fireEvent.click(screen.getByRole('button', { name: 'Approve Aarav Sharma' }))
-    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.short_name === 'Aarav S.')?.status).toBe('allowed'))
-    expect(await screen.findByText(/Aarav Sharma approved/)).toBeTruthy()
-    expect(await screen.findByText(/7 waiting/)).toBeTruthy()
+    // One tap: a real token is minted and the exact link is copied.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Generate magic link for Aarav Sharma' }))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(1))
+    const first = fakeMagicLinksFor('t1')[0]
+    expect(first.is_used).toBe(false)
+    expect(first.token).toMatch(/^[a-f0-9]{64}$/)
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`?token=${first.token}`))
+    expect(await within(neet).findByText('Active unused link')).toBeTruthy()
+    // The token lives in the URL and nowhere else: no name, no batch, no teacher.
+    expect(writeText.mock.calls.at(-1)?.[0]).not.toContain('Aarav')
+    expect(writeText.mock.calls.at(-1)?.[0]).not.toContain('NEET')
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Revoke Aarav Sharma' }))
-    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.short_name === 'Aarav S.')?.status).toBe('blocked'))
+    // A second tap kills the first link before the second exists — that is what "single use" means.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Re-link Aarav Sharma' }))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(2))
+    const [stale, fresh] = fakeMagicLinksFor('t1')
+    expect(stale.is_used).toBe(true)
+    expect(fresh.is_used).toBe(false)
 
-    // Refusing keeps him out; approving from the refused state lets him back in.
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve Aarav Sharma' }))
-    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.short_name === 'Aarav S.')?.status).toBe('allowed'))
+    // Redeeming in the portal (same RPC the static page calls) hands back a device token once.
+    const redeemed = await sb().rpc('redeem_magic_link', { p_token: fresh.token })
+    expect(redeemed.error).toBeNull()
+    const payload = redeemed.data as { student_id: string; device_token: string; full_name: string; batch_name: string }
+    expect(payload.full_name).toBe('Aarav Sharma')
+    expect(payload.batch_name).toBe('NEET Biology')
+    expect(payload.device_token).toMatch(/^device-/)
+    expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.is_activated).toBe(true)
+    expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.last_seen_at).toBeTruthy()
 
-    // Another batch's students are untouched, and a re-sync keeps every decision.
+    // The same link a second time is refused, and so is the one it replaced.
+    const twice = await sb().rpc('redeem_magic_link', { p_token: fresh.token })
+    expect((twice.data as { error?: string }).error).toMatch(/already used/i)
+    const staleTry = await sb().rpc('redeem_magic_link', { p_token: stale.token })
+    expect((staleTry.data as { error?: string }).error).toMatch(/already used/i)
+
+    // A verify refreshes last seen and returns the same student, never a different one.
+    const verified = await sb().rpc('verify_student_session', { p_device_token: payload.device_token })
+    expect((verified.data as { student_id: string }).student_id).toBe(payload.student_id)
+    const stranger = await sb().rpc('verify_student_session', { p_device_token: 'not-a-real-device-token' })
+    expect((stranger.data as { error?: string }).error).toBeTruthy()
+
+    // Activity: the first open is recorded, the second inside five minutes folds into it.
+    const noteId = '11111111-1111-1111-1111-111111111111'
+    const once = await sb().rpc('log_student_activity', {
+      p_device_token: payload.device_token, p_type: 'note_opened', p_ref_id: noteId, p_ref_title: 'Algebra basics',
+    })
+    const again = await sb().rpc('log_student_activity', {
+      p_device_token: payload.device_token, p_type: 'note_opened', p_ref_id: noteId, p_ref_title: 'Algebra basics',
+    })
+    const joined = await sb().rpc('log_student_activity', {
+      p_device_token: payload.device_token, p_type: 'class_attended', p_ref_id: null, p_ref_title: 'Live Class Session',
+    })
+    expect((once.data as { duplicate: boolean }).duplicate).toBe(false)
+    expect((again.data as { duplicate: boolean }).duplicate).toBe(true)
+    expect((joined.data as { duplicate: boolean }).duplicate).toBe(false)
+    expect(fakeActivityFor('t1')).toHaveLength(2)
+    const unknown = await sb().rpc('log_student_activity', {
+      p_device_token: 'not-a-real-device-token', p_type: 'note_opened', p_ref_id: noteId, p_ref_title: 'x',
+    })
+    expect((unknown.data as { error?: string }).error).toBeTruthy()
+
+    // The drawer is what the teacher actually reads: last seen, then what was opened.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
+    expect(await within(drawer).findByText('Algebra basics')).toBeTruthy()
+    expect(within(drawer).getByText('Live Class Session')).toBeTruthy()
+    expect(within(drawer).getByText('Note opened')).toBeTruthy()
+    expect(within(drawer).getByText('Class attended')).toBeTruthy()
+    expect(within(drawer).getAllByText('Online now').length).toBeGreaterThan(0)
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Close activity' }))
+
+    // Another batch is untouched; the linked student keeps their phone.
     fireEvent.click(screen.getByRole('button', { name: 'JEE Maths' }))
     await waitFor(() => expect(fakeHubStudentsFor('t1')).toHaveLength(15))
-    expect(fakeHubStudentsFor('t1').filter((row) => row.status === 'allowed')).toHaveLength(1)
+    expect(fakeHubStudentsFor('t1').filter((row) => row.is_activated)).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'NEET Biology' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Revoke Aarav Sharma' })).toBeTruthy())
+    const back = await screen.findByRole('region', { name: 'Students in NEET Biology' })
+    expect(await within(back).findByText('Device linked ✓')).toBeTruthy()
+
+    // Switching phones: the device dies, the history stays.
+    fireEvent.click(await within(back).findByRole('button', { name: 'Reset and generate a new link for Aarav Sharma' }))
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.is_activated).toBe(false))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(3))
+    expect(fakeActivityFor('t1')).toHaveLength(2)
   })
 
-  it('SP-02 has one-time local onboarding, a teacher switcher, duration/expiry UI and strict scope headers', () => {
+  it('SP-02 has exactly one door: a magic link, a device session, and no second option', () => {
     const html = read('student-hub/index.html')
-    expect(html).toContain('id="onboarding"')
-    expect(html).toContain('id="student-select"')
-    // No free-text name: a student claims a name the teacher allowed.
-    expect(html).not.toContain('id="student-name"')
-    expect(html).toContain('id="batch-select"')
-    expect(html).toContain('id="teacher-switch"')
-    expect(html).toContain('Switch Teacher')
-    expect(html).toContain('id="teacher-select"')
-    // Teacher selection is a field inside the one dialog, not a second screen.
-    expect(html).not.toContain('id="teacher-picker"')
-    expect(html).not.toContain('id="teacher-list"')
-    const setupForm = html.slice(html.indexOf('id="onboarding-form"'))
-    expect(setupForm.indexOf('id="teacher-select"')).toBeLessThan(setupForm.indexOf('</form>'))
+    // The locked screen, with the one sentence a student without a link should read.
+    expect(html).toContain('id="locked"')
+    expect(html).toContain('Access Restricted · Please open the personal magic login link shared by your teacher.')
+    // Nothing to fill in and nothing to choose: no signup, no name list, no guest mode, no switcher.
+    expect(html).not.toContain('id="onboarding"')
+    expect(html).not.toContain('id="student-select"')
+    expect(html).not.toContain('id="batch-select"')
+    expect(html).not.toContain('id="teacher-select"')
+    expect(html).not.toContain('id="teacher-switch"')
+    expect(html).not.toContain('Switch Teacher')
+    expect(html).not.toContain('Change</button>')
+    expect(html).not.toMatch(/<input[^>]+name="name"/i)
     expect(html).not.toMatch(/<nav\b/i)
 
     const portal = read('student-hub/portal.js')
     expect(portal).toMatch(/from '\.\/sanitize\.js(?:\?v=\d+)?'/)
-    expect(portal).toContain("name: 'student_name'")
-    expect(portal).toContain("batch: 'selected_batch'")
-    expect(portal).toContain("teacher: 'selected_teacher_id'")
-    expect(portal).toContain('localStorage.setItem')
-    expect(portal).toContain('localStorage.removeItem')
-    expect(portal).toContain('state.directory.filter((row) => row.batch === state.batch)')
-    expect(portal).toContain("from('student_hub_directory')")
-    expect(portal).toContain("client.rpc('student_hub_snapshot'")
-    expect(portal).toContain(".eq('batch_name', state.batch)")
-    expect(portal).toContain(".eq('teacher_id', state.teacherId)")
-    expect(portal).toContain("setHeader('X-Student-Hub-Batch'")
-    expect(portal).toContain("setHeader('X-Student-Hub-Teacher-Id'")
+    // Session: one key, written only from a server answer, cleared when the device is unlinked.
+    expect(portal).toContain("const SESSION_KEY = 'student_session'")
+    expect(portal).toContain('localStorage.setItem(SESSION_KEY')
+    expect(portal).toContain('localStorage.removeItem(SESSION_KEY)')
+    expect(portal).not.toContain("'student_name'")
+    // The three student-side RPCs, and the read-only snapshot for content.
+    expect(portal).toContain("client.rpc('redeem_magic_link'")
+    expect(portal).toContain("client.rpc('verify_student_session'")
+    expect(portal).toContain("client.rpc('log_student_activity'")
+    expect(portal).toContain("client.rpc('get_student_batch_data'")
+    // The token never survives in the address bar.
+    expect(portal).toContain("url.searchParams.delete('token')")
+    expect(portal).toContain('window.history.replaceState')
+    expect(portal).toContain('const LOCKED_USED')
+    expect(portal).toContain('The magic link has already been used or expired'.replace('The ', 'This '))
+    // Content comes from one token-scoped RPC. The client never names a batch to the server.
+    expect(portal).not.toContain('.from(')
+    expect(portal).toContain('p_device_token: state.session.device_token')
+    expect(portal).not.toMatch(/params\.get\('batch'\)/)
+    // The header badge is read-only and says where the batch came from.
+    expect(portal).toContain('Enrolled Batch: ${state.batch}')
+    expect(portal).toContain('· Verified')
+    // Storage headers carry the server's answer, not localStorage.
+    expect(portal).toContain("'X-Student-Hub-Batch': state.batch")
+    expect(portal).toContain("'X-Student-Hub-Teacher-Id': state.teacherId")
     expect(portal).toContain('function scopeHeaders()')
     expect(portal).toContain('/storage/v1/object/${STORAGE_BUCKET}/')
     expect(portal).toContain('Duration: ${formatDurationLabel(row.duration_minutes)}')
     expect(portal).toContain('Ends in ${formatRemaining(ms)}')
     expect(portal).toContain('Opens at start time')
     expect(portal).toContain('noteShareUrl')
-    expect(portal).toContain("new URLSearchParams(location.search)")
+    expect(portal).toContain('new URLSearchParams(location.search)')
     expect(portal).toContain('Copy share link')
     expect(portal).toContain('folder-group')
-    expect(portal).toContain('function fillTeacherOptions')
-    expect(portal).not.toContain('renderTeacherPicker')
+    // No onboarding machinery survives anywhere in the portal.
+    expect(portal).not.toContain('loadClassmates')
+    expect(portal).not.toContain('watchForApproval')
+    expect(portal).not.toContain('student_hub_request_access')
+    expect(portal).not.toContain('student_hub_directory')
 
     const sanitizer = read('student-hub/sanitize.js')
     expect(sanitizer).toContain('export function escapeHtml')
@@ -790,99 +884,187 @@ describe('Student Portal and RLS (SP)', () => {
     expect(manager).toContain('signedNoteUrl')
     expect(read('src/App.tsx')).toContain('batches={state.batches.map')
   })
-  it('SP-06 picks the teacher inside the setup dialog, and the teacher list follows the batch', () => {
-    const html = read('student-hub/index.html')
+  it('SP-06 redemption is single-use, strips the token, and the device is remembered', () => {
     const portal = read('student-hub/portal.js')
-    // One dialog, three fields: name, batch, teacher. Nothing else to step through.
-    expect(html).toContain('aria-label="Teacher"')
-    expect(html).toMatch(/<select id="teacher-select" aria-label="Teacher" required disabled>/)
-    expect(html).toContain('id="onboarding-form"')
-    expect(html).not.toContain('Choose your teacher</h2>')
-
-    // The batch the student picks rewrites the teacher options on the spot.
-    expect(portal).toContain('function fillTeacherOptions')
-    expect(portal).toContain("els.batchSelect.addEventListener('change'")
-    expect(portal).toContain('fillTeacherOptions(els.batchSelect.value)')
-    expect(portal).toContain('const batch = cleanLine(els.batchSelect.value, 80)')
-    // Submitting saves all three at once, and refuses to save a teacher from another batch.
-    expect(portal).toContain('const teachers = teachersForBatch(batch)')
-    expect(portal).toContain('const chosen = state.classmates.find((row) => row.key === studentKey)')
-    expect(portal).toContain('writeProfile({ name: chosen.short, batch, teacher: chosen.teacherId, student: chosen.key })')
-    // A missing teacher re-opens the same dialog instead of a second screen.
-    expect(portal).toContain('needs to approve')
+    // Link in -> redeem -> save -> strip. In that order, and the strip happens even when it fails.
+    expect(portal).toMatch(/async function redeemToken\(token\)/)
+    expect(portal).toMatch(/function writeSession\(session\)/)
+    expect(portal).toMatch(/function readSession\(\)/)
+    expect(portal).toContain("token = cleanLine(params.get('token'), 128)")
+    expect(portal.indexOf("url.searchParams.delete('token')")).toBeLessThan(portal.indexOf('await redeemToken(token)'))
+    // A used or invalid link gets the exact sentence, never the raw backend error.
+    expect(portal).toContain('This magic link has already been used or expired. Ask your teacher for a new link.')
+    expect(portal).toContain("showLocked(LOCKED_USED)")
+    // No link and no saved session -> locked, with nothing else rendered behind it.
+    expect(portal).toContain('if (!session) {')
+    expect(portal).toContain('showLocked(LOCKED_DEFAULT)')
+    // A saved session is re-verified on every visit, and a revoked device is dropped.
+    expect(portal).toContain('verifySession(saved.device_token)')
+    expect(portal).toContain('This device is no longer linked. Ask your teacher for a new magic link.')
+    // A paused batch stops at the locked screen, before any content call.
+    expect(portal).toContain("if (session.access_status !== 'active' && session.access_status !== 'paid')")
+    expect(portal).toContain('Batch access paused. Please contact your teacher.')
+    // Only a verified session reaches the hub or the data loaders.
+    expect(portal).toMatch(/async function enterHub\(\)[\s\S]{0,400}loadAll\(\)/)
+    expect(portal.indexOf('adoptSession(session)')).toBeLessThan(portal.indexOf('await enterHub()'))
+    // Silent tracking: notes on open, classes on Join Now, deduped locally and by the database.
+    expect(portal).toContain("logActivity('note_opened'")
+    expect(portal).toContain("logActivity('class_attended'")
+    expect(portal).toContain('const logged = new Set()')
+    expect(portal).toContain('join.addEventListener(\'click\'')
     expect(portal).not.toContain('teacher-picker')
   })
 
-  it('SP-07 access is a request the teacher approves, with short names only', () => {
-    const sql = [
-      read('supabase/migrations/20261124120000_student_hub_student_access.sql'),
-      read('supabase/migrations/20261124200000_student_hub_access_requests.sql'),
-    ].join('\n')
-    const requests = read('supabase/migrations/20261124200000_student_hub_access_requests.sql')
+  it('SP-07 the schema is three tables and three student-side doors, with tokens the anon key cannot read', () => {
+    const sql = read('supabase/migrations/20261125180000_magic_link_access.sql')
 
-    // Three states, no boolean.
-    expect(requests).toContain("check (status in ('pending', 'allowed', 'blocked'))")
-    expect(requests).toContain('alter column status set default')
-    expect(requests).toContain("alter table public.student_hub_students drop column if exists allowed;")
-    // A claim is a request, and only the owner can decide it.
-    expect(requests).toContain('create or replace function public.student_hub_request_access')
-    expect(requests).toContain('create or replace function public.decide_my_hub_student')
-    expect(requests).toContain('where teacher_id = who')
-    expect(requests).toContain('create or replace function public.student_hub_student_status')
-    // The batch list is visible (so a student can find their name) but never a full name.
-    expect(sql).not.toMatch(/full_name/)
-    expect(sql).toContain('short_name text not null')
-    // syncing again never overwrites the teacher's decision.
-    expect(requests).toMatch(/on conflict \(teacher_id, student_key\) do update[\s\S]{0,240}short_name = excluded\.short_name/)
-    expect(requests).not.toMatch(/on conflict \(teacher_id, student_key\) do update[\s\S]{0,240}status = /)
-    // The local id is opaque: no charset regex that silently drops real ids.
-    expect(requests).toContain('constraint student_hub_students_key_length')
-    expect(requests).toContain("drop constraint if exists student_hub_students_key_format")
-    expect(requests).toContain('and btrim(batch_name) = v_batch')
-    // anon can read the batch list and ask; it cannot decide or read the table.
-    expect(sql).toContain('revoke all on public.student_hub_students from public, anon, authenticated;')
-    expect(requests).toContain('grant execute on function public.student_hub_request_access(uuid, text) to anon, authenticated;')
-    expect(requests).toContain('grant execute on function public.decide_my_hub_student(text, text) to authenticated;')
+    // The old model is gone, not shadowed by a second one.
+    expect(sql).toContain('drop function if exists public.student_hub_request_access(uuid, text);')
+    expect(sql).toContain('drop function if exists public.student_hub_classmates(text);')
+    expect(sql).toContain('drop table if exists public.student_hub_students;')
+    expect(sql).not.toContain('create or replace function public.sync_my_hub_students')
 
-    // Portal: claim a name, then wait.
-    const html = read('student-hub/index.html')
-    const portal = read('student-hub/portal.js')
-    expect(html).toContain('id="student-select"')
-    expect(html).toContain('id="onboarding-waiting"')
-    expect(html).toContain('Ask my teacher to let me in →')
-    expect(portal).toContain("client.rpc('student_hub_request_access'")
-    expect(portal).toContain("client.rpc('student_hub_student_status'")
-    expect(portal).toContain('function watchForApproval')
-    expect(portal).toContain('function showWaiting')
-    // Nobody reaches loadAll() without an approval.
-    expect(portal).toMatch(/function enterHub\(\)[\s\S]{0,500}loadAll\(\)/)
-    expect(portal).toContain("} else if (status === 'allowed') {")
+    // Three tables, exactly as specified.
+    expect(sql).toContain('create table if not exists public.students (')
+    expect(sql).toContain('device_token text unique')
+    expect(sql).toContain('is_activated boolean not null default false')
+    expect(sql).toContain('last_seen_at timestamptz')
+    expect(sql).toContain('create table if not exists public.magic_links (')
+    expect(sql).toContain('token text not null unique')
+    expect(sql).toContain('references public.students (id) on delete cascade')
+    expect(sql).toContain('create table if not exists public.student_activity_logs (')
+    expect(sql).toContain("check (activity_type in ('note_opened', 'class_attended'))")
+
+    // Single use is enforced by the UPDATE itself, so two taps cannot both win.
+    expect(sql).toMatch(/create or replace function public\.redeem_magic_link\(p_token text\)/)
+    expect(sql).toMatch(/update public\.magic_links\s+set is_used = true, used_at = now\(\)\s+where token = btrim\(p_token\) and not is_used/)
+    expect(sql).toContain("'Invalid or already used magic link'")
+    expect(sql).toContain('set device_token = v_device, is_activated = true, last_seen_at = now()')
+    // Every device access re-verifies and refreshes last seen.
+    expect(sql).toMatch(/create or replace function public\.verify_student_session\(p_device_token text\)/)
+    expect(sql).toMatch(/set last_seen_at = now\(\)\s+where s\.device_token = btrim\(p_device_token\)/)
+    // Activity dedupes inside five minutes, by type and reference.
+    expect(sql).toMatch(/create or replace function public\.log_student_activity\(/)
+    expect(sql).toContain("and l.created_at > now() - interval '5 minutes'")
+
+    // Tokens minted on the server, never guessed by the client.
+    expect(sql).toContain('replace(gen_random_uuid()::text, \'-\', \'\')')
+    expect(sql).toContain('update public.magic_links\n     set is_used = true, used_at = now()\n   where student_id = p_student_id and not is_used;')
+    // Only the owner can mint, unlink or read activity — pinned to auth.uid(), not a name.
+    expect(sql.match(/security definer/g) ?? []).toHaveLength(8)
+    expect(sql).toContain('using (teacher_id = auth.uid())')
+    expect(sql).toContain("raise exception 'this student is not on your roster' using errcode = '22023'")
+
+    // anon can knock on exactly three doors, and read no table at all.
+    expect(sql).toContain('revoke all on public.students, public.magic_links, public.student_activity_logs')
+    expect(sql).toContain('grant execute on function public.redeem_magic_link(text) to anon, authenticated;')
+    expect(sql).toContain('grant execute on function public.verify_student_session(text) to anon, authenticated;')
+    expect(sql).toContain('grant execute on function public.log_student_activity(text, text, uuid, text) to anon, authenticated;')
+    expect(sql).toContain('grant execute on function public.generate_magic_link(uuid) to authenticated;')
+    expect(sql).not.toContain('grant execute on function public.generate_magic_link(uuid) to anon')
+    expect(sql).not.toContain('grant select on public.magic_links to anon')
   })
 
-  it('SP-05 keeps the onboarding card on one left edge with its own padding', () => {
+  it('SP-08 a device token cannot reach another batch, and a pause closes the door', async () => {
+    // Two batches of real content for the same teacher.
+    const neetNote = seedFakeStudentNote('t1', { title: 'NEET cell division', batch_name: 'NEET Biology' })
+    const jeeNote = seedFakeStudentNote('t1', { title: 'JEE integration drill', batch_name: 'JEE Maths' })
+    const jeeMeeting = seedFakeMeeting('t1', { batch_name: 'JEE Maths', meeting_title: 'JEE doubt class', is_live: true })
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    await openHub()
+    const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
+    fireEvent.click(await within(neet).findByRole('button', { name: 'Generate magic link for Aarav Sharma' }))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(1))
+    // The single click already copied the link — no second step for the teacher.
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const token = fakeMagicLinksFor('t1')[0].token
+    expect(writeText.mock.calls[0][0]).toContain(`/student-hub/?token=${token}`)
+
+    const redeemed = await sb().rpc('redeem_magic_link', { p_token: token })
+    const device = (redeemed.data as { device_token: string }).device_token
+
+    // The batch is decided by the server, so the payload simply cannot hold JEE rows.
+    const data = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    const payload = data.data as {
+      batch_name: string
+      access_status: string
+      notes: { batch_name: string }[]
+      meetings: { batch_name: string }[]
+    }
+    expect(payload.batch_name).toBe('NEET Biology')
+    expect(payload.access_status).toBe('active')
+    expect(payload.notes.every((note) => note.batch_name === 'NEET Biology')).toBe(true)
+    expect(payload.meetings).toHaveLength(0)
+    expect(payload.notes.map((note) => (note as { title: string }).title)).toContain('NEET cell division')
+
+    // A shared ?note= link from the other batch is refused by name, not silently ignored.
+    const foreign = await sb().rpc('get_single_student_note', { p_device_token: device, p_note_id: jeeNote.id })
+    expect((foreign.data as { error?: string }).error).toBe('Access Denied · This note belongs to another batch.')
+    const own = await sb().rpc('get_single_student_note', { p_device_token: device, p_note_id: neetNote.id })
+    expect((own.data as { note?: { title: string } }).note?.title).toBe('NEET cell division')
+    // A made-up note id is refused the same way.
+    const bogus = await sb().rpc('get_single_student_note', {
+      p_device_token: device, p_note_id: '00000000-0000-0000-0000-000000000000',
+    })
+    expect((bogus.data as { error?: string }).error).toContain('another batch')
+
+    // The meeting belongs to JEE, so it must never appear for this student.
+    expect(jeeMeeting.batch_name).toBe('JEE Maths')
+
+    // Pause: the server refuses, and the phone that was linked is unlinked with it.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Pause batch access' }))
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.access_status).toBe('suspended'))
+    const paused = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    expect((paused.data as { error?: string }).error).toBe('Batch access paused. Please contact your teacher.')
+    // The token survives the pause: the student must see the reason, not a dead link.
+    expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.device_token).toBe(device)
+    const afterPause = await sb().rpc('verify_student_session', { p_device_token: device })
+    expect((afterPause.data as { access_status: string }).access_status).toBe('suspended')
+    const noteWhilePaused = await sb().rpc('get_single_student_note', { p_device_token: device, p_note_id: neetNote.id })
+    expect((noteWhilePaused.data as { error?: string }).error).toContain('paused')
+
+    // Resume, and the badge on the row stops saying Paused.
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Resume batch access' }))
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.access_status).toBe('active'))
+    const resumed = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    expect((resumed.data as { batch_name: string }).batch_name).toBe('NEET Biology')
+  })
+
+  it('SP-05 keeps the locked card on one left edge with its own padding', () => {
     const css = read('student-hub/styles.css')
     const html = read('student-hub/index.html')
 
-    // Three rules used to fight over this card and the generic dashboard ones won: a 46px tile
+    // Three rules used to fight over the setup card and the generic dashboard ones won: a 46px tile
     // ended up 14px from the corner with a 24px radius instead of the intended 20/26.
     const lines = css.split('\n')
-    expect(lines.find((line) => line.includes('padding: clamp(14px, 2.4vw, 22px)')) ?? '').not.toContain('onboarding-card')
-    expect(lines.filter((line) => line.includes('border-radius: 24px')).join('\n')).not.toContain('onboarding-card')
+    expect(lines.find((line) => line.includes('padding: clamp(14px, 2.4vw, 22px)')) ?? '').not.toContain('locked-card')
+    expect(lines.filter((line) => line.includes('border-radius: 24px')).join('\n')).not.toContain('locked-card')
 
     // The card owns its padding and radius, and opts out of inherited centring.
-    const card = css.match(/\.onboarding-card \{([^}]*)\}/)
+    const card = css.match(/\.locked-card \{([^}]*)\}/)
     expect(card?.[1]).toContain('padding: 26px')
     expect(card?.[1]).toContain('border-radius: 32px')
     expect(card?.[1]).toContain('text-align: left')
-    expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]{0,4000}\.onboarding-card \{ padding: 20px; border-radius: 26px; \}/)
+    expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]{0,4000}\.locked-card \{ padding: 20px; border-radius: 26px; \}/)
 
-    // Tile → eyebrow → title → sub share a rhythm instead of stacking three margins.
-    expect(css).toContain('.onboarding-card > .brand-mark { margin: 0 0 16px; }')
-    expect(css).toContain('.onboarding-card .eyebrow { margin: 0 0 6px; }')
-    expect(css).toContain('.onboarding-card h2 { margin: 0 0 10px; font-size: 27px; }')
+    // Tile -> eyebrow -> title -> sentence share one rhythm instead of stacking three margins.
+    expect(css).toContain('.locked-card > .brand-mark { margin: 0 0 16px; }')
+    expect(css).toContain('.locked-card .eyebrow { margin: 0 0 6px; }')
+    expect(css).toContain('.locked-card h2 { margin: 0 0 10px; font-size: 27px; }')
 
-    // The stylesheet is cache-busted so the phone actually fetches the fix.
-    expect(html).toMatch(/styles\.css\?v=9/)
+    // The dead setup styles are gone rather than left to rot beside the new ones.
+    expect(css).not.toContain('.onboarding-card')
+    expect(css).not.toContain('.switch-wrap')
+    expect(css).not.toContain('.form-field')
+
+    // The stylesheet is cache-busted so the phone actually fetches the change.
+    expect(html).toMatch(/styles\.css\?v=10/)
+    expect(html).toMatch(/portal\.js\?v=9/)
   })
 
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
@@ -897,18 +1079,18 @@ describe('Student Portal and RLS (SP)', () => {
     // The build-config instruction must never reach a student's screen.
     expect(portal).not.toContain('Add the public URL and anon key')
     expect(portal).toContain('Student Hub is not available on this site yet')
-    // "Choose a teacher" is an instruction, not a re-selectable value.
-    expect(portal).toContain('placeholder.disabled = true')
-    expect(portal).toContain("state.teachers.length ? 'Choose a teacher' : 'No teacher yet'")
-    // A network failure is reported as a network failure, never as "no batches".
-    expect(portal).toContain('We could not load your batches just now.')
-    expect(portal).toContain("state.directoryError = friendlyError(error)")
+    // A network failure is reported as a network failure, and never as a permissions problem.
+    expect(portal).toContain('We could not reach the classroom just now.')
+    expect(portal).toContain("return 'Could not load Student Hub right now. Please try again.'")
     expect(portal).not.toContain('then refresh the page')
+    // The locked screen is the only thing a student without a link can see.
+    expect(html).toContain('Access Restricted · Please open the personal magic login link shared by your teacher.')
+    expect(portal).toContain('showLocked')
 
     const css = read('student-hub/styles.css')
     expect(css).toMatch(/\.search-icon\s*\{[^}]*right:\s*13px/)
     expect(css).toMatch(/\.search-field input\s*\{[^}]*padding:\s*0 38px 0 14px/)
-    expect(css).toMatch(/\.switch-wrap select:disabled/)
+    expect(css).not.toContain('.switch-wrap')
     expect(css).toMatch(/\.footer\s*\{[^}]*flex-direction:\s*column/)
 
     // v4 geometry: the live card is one 16px stack and a title-less class still reads well.
