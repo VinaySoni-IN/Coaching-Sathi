@@ -9,27 +9,60 @@ import { formatClock, readClock } from './clock'
 export { cleanBody, cleanLine, safeHttpUrl } from './sanitize'
 
 export const STUDENT_HUB_PATH = './student-hub/'
-/** "Vinay Soni" -> "Vinay S." The portal only ever shows this short form of a name. */
-export function shortStudentName(fullName: string): string {
-  const parts = cleanLine(fullName, 120).split(/\s+/).filter(Boolean)
-  if (!parts.length) return ''
-  // Only the leading letter is touched: "de Souza" must survive as it was typed.
-  const first = `${parts[0].charAt(0).toUpperCase()}${parts[0].slice(1)}`
-  if (parts.length === 1) return first
-  const last = parts[parts.length - 1]
-  // An initial is all the portal is allowed to reveal of the surname.
-  return `${first} ${last.charAt(0).toUpperCase()}.`
+/** How a student's link stands, in the order the teacher cares about it. */
+export type HubLinkState = 'device_linked' | 'active_link' | 'no_link'
+
+/** One row of the roster, as the database reports it after a sync. */
+export interface HubStudentRow {
+  student_id: string
+  full_name: string
+  is_activated: boolean
+  has_active_link: boolean
+  last_seen_at: string | null
 }
 
-/** Where one student stands. `pending` is a request waiting for the teacher. */
-export type HubAccessStatus = 'pending' | 'allowed' | 'blocked'
-
-/** One row of the access list the class roster projects into Supabase. */
-export interface HubStudentAccess {
-  student_key: string
-  short_name: string
-  status: HubAccessStatus
+/** One line of the teacher's Activity drawer. */
+export interface HubActivity {
+  activity_type: 'note_opened' | 'class_attended'
+  reference_title: string
+  created_at: string
 }
+
+/** Which badge a roster row gets: a linked phone beats an unused link, which beats no link. */
+export function linkStateOf(row: Pick<HubStudentRow, 'is_activated' | 'has_active_link'> | undefined): HubLinkState {
+  if (!row) return 'no_link'
+  if (row.is_activated) return 'device_linked'
+  return row.has_active_link ? 'active_link' : 'no_link'
+}
+
+/** "Online now" inside two minutes, then a plain relative stamp. Never an empty string. */
+export function lastSeenLabel(iso: string | null | undefined, now = Date.now()): string {
+  const at = Date.parse(iso ?? '')
+  if (!Number.isFinite(at)) return 'Not opened yet'
+  const diff = Math.max(0, now - at)
+  if (diff < 2 * 60_000) return 'Online now'
+  if (diff < 60 * 60_000) {
+    const mins = Math.max(1, Math.round(diff / 60_000))
+    return `Last seen ${mins} min ago`
+  }
+  if (diff < 24 * 60 * 60_000) {
+    const hours = Math.max(1, Math.round(diff / 3_600_000))
+    return `Last seen ${hours} hr ago`
+  }
+  if (diff < 7 * 24 * 60 * 60_000) {
+    const days = Math.max(1, Math.round(diff / 86_400_000))
+    return `Last seen ${days} day${days === 1 ? '' : 's'} ago`
+  }
+  const date = new Date(at)
+  return `Last seen ${date.getDate()} ${date.toLocaleString('en', { month: 'short' })}`
+}
+
+/** The one link a student can open. The token is the only thing in it; no name, no batch. */
+export function magicLinkUrl(token: string): string {
+  const clean = cleanLine(token, 128)
+  return clean ? `${studentHubUrl()}?token=${encodeURIComponent(clean)}` : studentHubUrl()
+}
+
 export const STUDENT_NOTES_BUCKET = 'student_notes'
 export const MAX_NOTE_FILE_SIZE = 15 * 1024 * 1024
 export const DEFAULT_BATCH_NAME = 'General'
@@ -324,40 +357,61 @@ export async function saveMyMeeting(input: MeetingInput): Promise<LiveMeeting> {
   return data as LiveMeeting
 }
 
-/** Publishes this batch's roster so the portal can offer real names, and returns their access state. */
+/** Publishes this batch's roster and returns each student's link state. */
 export async function syncHubStudents(
   batchName: string,
   teacherName: string,
-  students: { key: string; name: string }[],
-): Promise<HubStudentAccess[]> {
+  students: { name: string }[],
+): Promise<HubStudentRow[]> {
   const batch = cleanLine(batchName, 80)
   if (!batch) return []
   const payload = students
-    .map((student) => ({ key: cleanLine(student.key, 64), short: shortStudentName(student.name) }))
-    .filter((student) => student.key && student.short)
-  const { data, error } = await sb().rpc('sync_my_hub_students', {
+    .map((student) => ({ name: cleanLine(student.name, 120) }))
+    .filter((student) => student.name)
+  const { data, error } = await sb().rpc('sync_my_students', {
     p_batch_name: batch,
     p_teacher_name: cleanLine(teacherName, 120),
     p_students: payload,
   })
   if (error) throw error
-  return ((data ?? []) as HubStudentAccess[]).map((row) => ({
-    student_key: row.student_key,
-    short_name: row.short_name,
-    status: row.status === 'allowed' ? 'allowed' : row.status === 'blocked' ? 'blocked' : 'pending',
+  return ((data ?? []) as HubStudentRow[]).map((row) => ({
+    student_id: row.student_id,
+    full_name: row.full_name,
+    is_activated: Boolean(row.is_activated),
+    has_active_link: Boolean(row.has_active_link),
+    last_seen_at: row.last_seen_at ?? null,
   }))
 }
 
-/** The teacher's decision on one request. Returns the state the row ended up in. */
-export async function decideHubStudent(studentKey: string, status: HubAccessStatus): Promise<HubAccessStatus> {
-  const key = cleanLine(studentKey, 64)
-  if (!key) throw new Error('Choose a student first.')
-  const { data, error } = await sb().rpc('decide_my_hub_student', {
-    p_student_key: key,
-    p_status: status,
-  })
+/** A fresh single-use token. Any earlier unused link stops working here. */
+export async function generateMagicLink(studentId: string): Promise<string> {
+  const id = cleanLine(studentId, 64)
+  if (!id) throw new Error('Tap the student first.')
+  const { data, error } = await sb().rpc('generate_magic_link', { p_student_id: id })
   if (error) throw error
-  return data === 'allowed' ? 'allowed' : data === 'blocked' ? 'blocked' : 'pending'
+  const token = cleanLine(data, 128)
+  if (!token) throw new Error('The link could not be created. Try again.')
+  return token
+}
+
+/** Unlinks the phone that holds this student's device token. History is kept. */
+export async function resetStudentDevice(studentId: string): Promise<void> {
+  const { data, error } = await sb().rpc('reset_student_device', { p_student_id: studentId })
+  if (error) throw error
+  if (data !== true) throw new Error('That device could not be unlinked.')
+}
+
+/** Everything this student opened, newest first. */
+export async function fetchStudentActivity(studentId: string): Promise<HubActivity[]> {
+  const { data, error } = await sb().rpc('my_student_activity', { p_student_id: studentId })
+  if (error) throw error
+  return ((data ?? []) as HubActivity[])
+    .filter((row) => row && (row.activity_type === 'note_opened' || row.activity_type === 'class_attended'))
+    .map((row) => ({
+      activity_type: row.activity_type,
+      reference_title: cleanLine(row.reference_title, 160),
+      created_at: row.created_at,
+    }))
 }
 
 export async function deleteMeeting(meetingId: string): Promise<void> {

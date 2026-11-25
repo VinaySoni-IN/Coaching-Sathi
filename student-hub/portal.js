@@ -1,9 +1,13 @@
-/* Coaching Sathi Student Hub — read-only, single-page portal (v3: batches, folders, durations, scheduled meetings, ?note= links).
-   The Teacher App owns every write. This page uses an anonymous Supabase client, SELECTs and one
-   read-only snapshot RPC. It never calls INSERT/UPDATE/DELETE/RPC-write and only ever uses the
-   public anon key — no privileged key is present in this static bundle.
-   Sections: 1) config + local profile  2) onboarding + teacher switcher  3) live + scheduled
-             classes  4) notes/folders (+ ?note= deep links)  5) data loading + realtime/polling. */
+/* Coaching Sathi Student Hub — read-only, single-page portal.
+   Access is a single-use magic link: the teacher taps "Generate link" for one student, and that
+   student opens .../student-hub/?token=<64 hex>. The link is redeemed by a security-definer RPC, which
+   mints a device token; the device keeps it, the URL is cleaned, and every later visit re-verifies the
+   token and refreshes last_seen_at. No name list, no signup, no guest mode.
+   The Teacher App owns every write. This page uses the anonymous key, SELECTs scoped by two headers,
+   and four RPCs: redeem_magic_link, verify_student_session, log_student_activity and the read-only
+   student_hub_snapshot. It never calls INSERT/UPDATE/DELETE and never holds a privileged key.
+   Sections: 0) session  1) locked / redeem  2) live + scheduled classes  3) notes (+ ?note= links)
+             4) data loading + realtime/polling. */
 
 'use strict'
 
@@ -16,30 +20,15 @@ const CONFIG_URL = './config.json'
 const STORAGE_BUCKET = 'student_notes'
 const POLL_MS = 15000
 const UNFILED_FOLDER = 'Unfiled'
-const STORAGE_KEYS = {
-  name: 'student_name',
-  batch: 'selected_batch',
-  teacher: 'selected_teacher_id',
-  student: 'student_key',
-}
+/** One key: the whole session, so a half-written login can never exist. */
+const SESSION_KEY = 'student_session'
 
 const els = {
   topbar: document.getElementById('topbar'),
   studentGreeting: document.getElementById('student-greeting'),
   batchPill: document.getElementById('batch-pill'),
-  teacherSwitch: document.getElementById('teacher-switch'),
-  changeProfile: document.getElementById('change-profile'),
-  onboarding: document.getElementById('onboarding'),
-  studentSelect: document.getElementById('student-select'),
-  batchSelect: document.getElementById('batch-select'),
-  onboardingError: document.getElementById('onboarding-error'),
-  onboardingRetry: document.getElementById('onboarding-retry'),
-  teacherSelect: document.getElementById('teacher-select'),
-  onboardingForm: document.getElementById('onboarding-form'),
-  waiting: document.getElementById('onboarding-waiting'),
-  waitingTitle: document.getElementById('waiting-title'),
-  waitingText: document.getElementById('waiting-text'),
-  waitingCheck: document.getElementById('waiting-check'),
+  locked: document.getElementById('locked'),
+  lockedText: document.getElementById('locked-text'),
   liveContent: document.getElementById('live-content'),
   syncLabel: document.getElementById('sync-label'),
   syncBanner: document.getElementById('sync-banner'),
@@ -55,15 +44,12 @@ const els = {
 
 const state = {
   config: { url: '', key: '' },
+  /** { student_id, device_token, full_name, batch_name, teacher_id, teacher_name } */
+  session: null,
   studentName: '',
-  studentKey: '',
-  classmates: [],
-  classmatesError: false,
   batch: '',
   teacherId: '',
-  directory: [],
-  batches: [],
-  teachers: [],
+  teacherName: '',
   meeting: null,
   meetings: [],
   deepLinkNote: '',
@@ -73,7 +59,6 @@ const state = {
   subject: 'all',
   kind: 'all',
   error: '',
-  directoryError: '',
   loading: false,
   loadedOnce: false,
 }
@@ -81,6 +66,8 @@ const state = {
 let client = null
 let channel = null
 let toastTimer = 0
+/** Notes and classes already reported this visit — the DB dedupes too, this just saves round trips. */
+const logged = new Set()
 
 function elem(tag, className = '', text) {
   const node = document.createElement(tag)
@@ -145,8 +132,8 @@ function friendlyError(error) {
   return 'Could not load Student Hub right now. Please try again.'
 }
 
-function teacherNameFor(id) {
-  return state.teachers.find((teacher) => teacher.id === id)?.name || 'Your teacher'
+function teacherNameFor() {
+  return state.teacherName || 'Your teacher'
 }
 
 /** Attach the DB-side scope to one PostgREST query. RLS reads both headers on the server. */
@@ -190,367 +177,155 @@ async function readConfig() {
   }
 }
 
-function readProfile() {
-  try {
-    return {
-      name: cleanLine(localStorage.getItem(STORAGE_KEYS.name), 80),
-      batch: cleanLine(localStorage.getItem(STORAGE_KEYS.batch), 80),
-      teacher: cleanLine(localStorage.getItem(STORAGE_KEYS.teacher), 64),
-      student: cleanLine(localStorage.getItem(STORAGE_KEYS.student), 64),
-    }
-  } catch {
-    return { name: '', batch: '', teacher: '', student: '' }
-  }
-}
-
-function writeProfile(profile) {
-  try {
-    localStorage.setItem(STORAGE_KEYS.name, cleanLine(profile.name, 80))
-    localStorage.setItem(STORAGE_KEYS.batch, cleanLine(profile.batch, 80))
-    localStorage.setItem(STORAGE_KEYS.teacher, cleanLine(profile.teacher, 64))
-    localStorage.setItem(STORAGE_KEYS.student, cleanLine(profile.student, 64))
-  } catch {
-    showToast('This device blocked local storage; you may need to set up again next visit.')
-  }
-}
-
-function clearProfile() {
-  try {
-    Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key))
-  } catch { /* storage blocked */ }
-}
-
 /* --------------------------------------------------------------------------------------------
-   2. Onboarding + teacher selection / one-click switcher
+   0. The session: one object in localStorage, written only after the server has spoken.
    -------------------------------------------------------------------------------------------- */
-function renderTopbar() {
-  els.studentGreeting.textContent = state.studentName ? `Hi, ${state.studentName}` : 'Student Hub'
-  els.batchPill.textContent = state.batch ? `Batch: ${state.batch}` : 'Choose a batch'
-  els.teacherSwitch.replaceChildren()
-  const chosen = state.teachers.find((teacher) => teacher.id === state.teacherId)
-  // The placeholder is only an instruction: once a teacher exists it is disabled, so tapping the
-  // control can never leave the hub in a "no teacher" state.
-  if (!chosen) {
-    const placeholder = document.createElement('option')
-    placeholder.value = ''
-    placeholder.textContent = state.teachers.length ? 'Choose a teacher' : 'No teacher yet'
-    placeholder.disabled = true
-    placeholder.selected = true
-    els.teacherSwitch.append(placeholder)
-  }
-  state.teachers.forEach((teacher) => {
-    const option = document.createElement('option')
-    option.value = teacher.id
-    option.textContent = teacher.name
-    els.teacherSwitch.append(option)
-  })
-  els.teacherSwitch.value = chosen ? chosen.id : ''
-  const noTeachers = state.teachers.length === 0
-  els.teacherSwitch.disabled = noTeachers
-  els.teacherSwitch.setAttribute('aria-disabled', String(noTeachers))
-  els.teacherSwitch.title = noTeachers ? 'No teacher is listed for this batch yet' : 'Switch teacher'
-}
-
-function showOnboardingError(message, allowRetry = false) {
-  els.onboardingError.textContent = message
-  els.onboardingError.hidden = false
-  els.onboardingRetry.hidden = !allowRetry
-}
-
-function clearOnboardingError() {
-  els.onboardingError.textContent = ''
-  els.onboardingError.hidden = true
-  els.onboardingRetry.hidden = true
-}
-
-function teachersForBatch(batch) {
-  // Strictly teachers attached to this student's selected batch — no other batch's teachers.
-  return batch ? state.directory.filter((row) => row.batch === batch) : []
-}
-
-/** The teacher list lives inside the setup dialog and follows the batch, as the student picks it. */
-function fillTeacherOptions(batch, { keepSelection = false } = {}) {
-  if (!els.teacherSelect) return
-  const teachers = teachersForBatch(batch)
-  const previous = keepSelection ? cleanLine(els.teacherSelect.value, 64) : cleanLine(state.teacherId, 64)
-  els.teacherSelect.replaceChildren()
-  const placeholder = document.createElement('option')
-  placeholder.value = ''
-  placeholder.textContent = !batch
-    ? 'Choose your batch first'
-    : teachers.length ? 'Choose your teacher' : 'No teacher listed yet'
-  els.teacherSelect.append(placeholder)
-  teachers.forEach((teacher) => {
-    const option = document.createElement('option')
-    option.value = teacher.id
-    option.textContent = teacher.name
-    els.teacherSelect.append(option)
-  })
-  els.teacherSelect.value = teachers.some((teacher) => teacher.id === previous) ? previous : ''
-  els.teacherSelect.disabled = !batch || !teachers.length
-}
-
-/** Allowed classmates of a batch: { teacher_id, teacher_name, student_key, short_name }. */
-async function loadClassmates(batch) {
-  state.classmates = []
-  if (!client || !batch) return []
+function readSession() {
   try {
-    const { data, error } = await client.rpc('student_hub_classmates', { p_batch_name: batch })
-    if (error) throw error
-    state.classmates = (data || [])
-      .map((row) => ({
-        teacherId: cleanLine(row.teacher_id, 64),
-        teacherName: cleanLine(row.teacher_name, 120),
-        key: cleanLine(row.student_key, 64),
-        short: cleanLine(row.short_name, 40),
-        status: cleanLine(row.status, 12) === 'allowed' ? 'allowed' : 'pending',
-      }))
-      .filter((row) => row.key && row.short && row.teacherId)
-  } catch {
-    state.classmates = []
-    state.classmatesError = true
-  }
-  return state.classmates
-}
-
-/**
- * The names a student may claim: only rows the teacher switched on. When two teachers allow the same
- * short name, the teacher is appended so the student can tell them apart.
- */
-function fillStudentOptions(selectedKey = '') {
-  if (!els.studentSelect) return
-  els.studentSelect.replaceChildren()
-  const placeholder = document.createElement('option')
-  placeholder.value = ''
-  const undecided = !cleanLine(els.batchSelect.value, 80)
-  const duplicate = state.classmates.filter((row) => row.short === (state.classmates.find((x) => x.key === selectedKey) || {}).short).length > 1
-  placeholder.textContent = undecided
-    ? 'Choose your batch first'
-    : state.classmates.length ? 'Select your name' : 'No names allowed yet'
-  els.studentSelect.append(placeholder)
-  state.classmates.forEach((row) => {
-    const option = document.createElement('option')
-    option.value = row.key
-    const sameName = state.classmates.filter((other) => other.short === row.short).length > 1
-    option.textContent = sameName && row.teacherName ? `${row.short} — ${row.teacherName}` : row.short
-    if (duplicate && row.teacherName) option.dataset.teacher = row.teacherId
-    els.studentSelect.append(option)
-  })
-  els.studentSelect.value = state.classmates.some((row) => row.key === selectedKey) ? selectedKey : ''
-  els.studentSelect.disabled = undecided || !state.classmates.length
-}
-
-let waitTimer = 0
-
-function stopWaiting() {
-  if (waitTimer) window.clearTimeout(waitTimer)
-  waitTimer = 0
-}
-
-/** The form is for asking; this panel is for waiting. Only one of them is ever on screen. */
-function showWaiting(message) {
-  if (els.onboardingForm) els.onboardingForm.hidden = true
-  if (els.waiting) els.waiting.hidden = false
-  if (els.waitingText) els.waitingText.textContent = message
-  if (els.waitingTitle) els.waitingTitle.textContent = 'Waiting for your teacher'
-}
-
-function showSetupForm() {
-  stopWaiting()
-  if (els.waiting) els.waiting.hidden = true
-  if (els.onboardingForm) els.onboardingForm.hidden = false
-}
-
-/** Ask the database where this claim stands: 'pending' | 'allowed' | 'blocked' | null. */
-async function accessStatus(teacherId, studentKey) {
-  if (!client || !teacherId || !studentKey) return null
-  try {
-    const { data, error } = await client.rpc('student_hub_student_status', {
-      p_teacher_id: teacherId,
-      p_student_key: studentKey,
-    })
-    if (error) throw error
-    return cleanLine(data, 12) || null
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const session = {
+      student_id: cleanLine(parsed.student_id, 64),
+      device_token: cleanLine(parsed.device_token, 128),
+      full_name: cleanLine(parsed.full_name, 120),
+      batch_name: cleanLine(parsed.batch_name, 80),
+      teacher_id: cleanLine(parsed.teacher_id, 64),
+      teacher_name: cleanLine(parsed.teacher_name, 120),
+    }
+    if (!session.student_id || !session.device_token || !session.batch_name || !session.teacher_id) return null
+    return session
   } catch {
     return null
   }
 }
 
-function enterHub() {
-  stopWaiting()
-  els.onboarding.hidden = true
-  showSetupForm()
-  clearOnboardingError()
-  renderTopbar()
-  state.loadedOnce = false
-  void loadAll().then(() => {
-    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
-      showToast('That note is not available for your batch and teacher.')
-    }
-  })
-}
-
-/** While the student waits, the page re-asks every few seconds — no refresh needed. */
-function watchForApproval() {
-  stopWaiting()
-  waitTimer = window.setTimeout(async () => {
-    const status = await accessStatus(state.teacherId, state.studentKey)
-    if (status === 'allowed') {
-      enterHub()
-      showToast('Your teacher let you in. Welcome!')
-      return
-    }
-    if (status === 'blocked') {
-      stopWaiting()
-      showSetupForm()
-      showOnboardingError('Your teacher did not approve this name. Pick your name again or ask them directly.', true)
-      return
-    }
-    watchForApproval()
-  }, 5000)
-}
-
-function showOnboarding() {
-  els.batchSelect.replaceChildren()
-  const placeholder = document.createElement('option')
-  placeholder.value = ''
-  placeholder.textContent = 'Select your batch'
-  els.batchSelect.append(placeholder)
-  state.batches.forEach((batch) => {
-    const option = document.createElement('option')
-    option.value = batch
-    option.textContent = batch
-    els.batchSelect.append(option)
-  })
-  els.batchSelect.value = state.batch && state.batches.includes(state.batch) ? state.batch : ''
-  els.batchSelect.disabled = state.batches.length === 0
-  fillTeacherOptions(els.batchSelect.value)
-  fillStudentOptions(state.studentKey)
-  const savedBatch = cleanLine(els.batchSelect.value, 80)
-  if (savedBatch && els.studentSelect) {
-    // Names arrive a moment later; the field says so rather than looking broken.
-    els.studentSelect.disabled = true
-    els.studentSelect.replaceChildren(new Option('Loading names…', ''))
-    state.classmatesError = false
-    void loadClassmates(savedBatch).then(() => {
-      fillStudentOptions(state.studentKey)
-      if (state.classmatesError) showOnboardingError('We could not load the names for this batch. Check your connection and tap Refresh.', true)
-    })
-  }
-  clearOnboardingError()
-  if (state.directoryError) {
-    // A failed request is not the teacher's fault — offer the same friendly retry, say why.
-    showOnboardingError('We could not load your batches just now. Check your connection and try again.', true)
-  } else if (!state.batches.length) {
-    showOnboardingError('No batches are listed yet. Ask your teacher to add your batch, then tap Refresh.', true)
-  }
-  showSetupForm()
-  els.onboarding.hidden = false
-  try { els.studentSelect.focus() } catch { /* not focusable in some environments */ }
-}
-
-async function submitOnboarding(event) {
-  event.preventDefault()
-  const batch = cleanLine(els.batchSelect.value, 80)
-  if (!batch || !state.batches.includes(batch)) {
-    showOnboardingError('Please choose your batch from the dropdown.', !state.batches.length)
-    return
-  }
-  const studentKey = cleanLine(els.studentSelect ? els.studentSelect.value : '', 64)
-  const chosen = state.classmates.find((row) => row.key === studentKey)
-  if (!chosen) {
-    showOnboardingError('Tap your name in the list. Every student of the batch is there once the teacher opens the Hub.', !state.classmates.length)
-    return
-  }
-  const teachers = teachersForBatch(batch)
-  if (!teachers.length) {
-    showOnboardingError(`No teacher is listed for ${batch} yet. Ask your teacher to share a note or start a class, then tap Refresh.`, true)
-    return
-  }
-
-  // The claim is what the teacher approves; the teacher is whoever owns this name.
-  state.studentName = chosen.short
-  state.studentKey = chosen.key
-  state.batch = batch
-  state.teacherId = chosen.teacherId
-  state.teachers = teachers
-  writeProfile({ name: chosen.short, batch, teacher: chosen.teacherId, student: chosen.key })
-  renderTopbar()
-  clearOnboardingError()
-
-  let status = 'pending'
+function writeSession(session) {
   try {
-    const { data, error } = await client.rpc('student_hub_request_access', {
-      p_teacher_id: chosen.teacherId,
-      p_student_key: chosen.key,
-    })
-    if (error) throw error
-    status = cleanLine(data, 12) || 'pending'
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   } catch {
-    showOnboardingError('We could not send your request just now. Check your connection and try again.', true)
-    return
+    // The hub still works for this visit; the next one asks for a new link.
   }
-
-  if (status === 'allowed') {
-    enterHub()
-    return
-  }
-  showWaiting(`You asked ${chosen.teacherName || 'your teacher'} to let ${chosen.short} into ${batch}. They need to approve you — this page checks again on its own.`)
-  watchForApproval()
 }
 
-async function chooseTeacher(id) {
-  const teacher = state.teachers.find((row) => row.id === id)
-  if (!teacher) return
-  state.teacherId = teacher.id
-  writeProfile({ name: state.studentName, batch: state.batch, teacher: teacher.id, student: state.studentKey })
-  renderTopbar()
-  const status = await accessStatus(state.teacherId, state.studentKey)
-  if (status === 'allowed') {
-    enterHub()
-    return
-  }
-  if (status === 'pending') {
-    els.onboarding.hidden = false
-    showWaiting(`${teacher.name} still needs to approve ${state.studentName || 'you'}. This page checks again on its own.`)
-    watchForApproval()
-    return
-  }
-  els.onboarding.hidden = false
-  showOnboarding()
-  showOnboardingError('This name is not approved yet. Pick your name again to ask again.')
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY) } catch { /* storage blocked */ }
 }
 
-function changeProfile() {
-  clearProfile()
-  state.studentName = ''
-  state.studentKey = ''
-  state.classmates = []
-  state.batch = ''
-  state.teacherId = ''
-  state.teachers = []
-  state.meeting = null
-  state.meetings = []
-  state.folders = []
-  state.notes = []
-  state.loadedOnce = false
-  state.query = ''
-  state.subject = 'all'
-  state.kind = 'all'
-  state.deepLinkNote = ''
-  if (els.search) els.search.value = ''
-  if (els.subjectFilter) els.subjectFilter.value = 'all'
-  if (els.kindFilter) els.kindFilter.value = 'all'
+/** Everything the page needs from a session object, in one place. */
+function adoptSession(session) {
+  state.session = session
+  state.studentName = session.full_name
+  state.batch = session.batch_name
+  state.teacherId = session.teacher_id
+  state.teacherName = session.teacher_name || 'Your teacher'
   renderTopbar()
-  renderLive()
-  renderNotes()
-  showOnboarding()
+}
+
+function renderTopbar() {
+  els.studentGreeting.textContent = state.studentName ? `Hi, ${state.studentName}` : 'Student Hub'
+  els.batchPill.textContent = state.batch ? `Batch: ${state.batch}` : 'No batch yet'
 }
 
 /* --------------------------------------------------------------------------------------------
-   3. Live + scheduled classes: one card per meeting, never more than the teacher scheduled
+   1. Locked screen and magic-link redemption. Deliberately no third option: no name picker, no
+      signup, no guest mode.
    -------------------------------------------------------------------------------------------- */
-/** Effective state from the clock — the same rule the database applies. */
+function showLocked(message) {
+  if (els.lockedText) els.lockedText.textContent = message
+  if (els.locked) els.locked.hidden = false
+  document.body.classList.add('is-locked')
+}
+
+function hideLocked() {
+  if (els.locked) els.locked.hidden = true
+  document.body.classList.remove('is-locked')
+}
+
+/** The only two messages this screen ever shows — specific, and never a SQL error. */
+const LOCKED_DEFAULT = 'Access Restricted · Please open the personal magic login link shared by your teacher.'
+const LOCKED_USED = 'This magic link has already been used or expired. Ask your teacher for a new link.'
+
+/**
+ * Exchange ?token= for a device session. The URL is cleaned immediately afterwards, even on failure,
+ * so a refresh can never re-trigger the same single-use token.
+ */
+async function redeemToken(token) {
+  try {
+    const { data, error } = await client.rpc('redeem_magic_link', { p_token: token })
+    if (error) throw error
+    const payload = data && typeof data === 'object' ? data : {}
+    if (payload.error || !payload.device_token) {
+      showLocked(LOCKED_USED)
+      return null
+    }
+    const session = {
+      student_id: cleanLine(payload.student_id, 64),
+      device_token: cleanLine(payload.device_token, 128),
+      full_name: cleanLine(payload.full_name, 120),
+      batch_name: cleanLine(payload.batch_name, 80),
+      teacher_id: cleanLine(payload.teacher_id, 64),
+      teacher_name: cleanLine(payload.teacher_name, 120),
+    }
+    writeSession(session)
+    return session
+  } catch {
+    // A network failure is not "already used": the link may still be good, so say so honestly.
+    showLocked('We could not reach the classroom just now. Check your connection and open your link again.')
+    return null
+  }
+}
+
+/** Every later visit. A device the teacher unlinked fails here and drops back to the locked screen. */
+async function verifySession(deviceToken) {
+  try {
+    const { data, error } = await client.rpc('verify_student_session', { p_device_token: deviceToken })
+    if (error) throw error
+    const payload = data && typeof data === 'object' ? data : {}
+    if (payload.error || !payload.device_token) {
+      clearSession()
+      showLocked('This device is no longer linked. Ask your teacher for a new magic link.')
+      return null
+    }
+    return {
+      student_id: cleanLine(payload.student_id, 64),
+      device_token: cleanLine(payload.device_token, 128),
+      full_name: cleanLine(payload.full_name, 120),
+      batch_name: cleanLine(payload.batch_name, 80),
+      teacher_id: cleanLine(payload.teacher_id, 64),
+      teacher_name: cleanLine(payload.teacher_name, 120),
+    }
+  } catch {
+    showLocked('We could not reach the classroom just now. Check your connection and try again.')
+    return null
+  }
+}
+
+/** The Hub itself. Only ever called with a verified session. */
+async function enterHub() {
+  hideLocked()
+  state.loadedOnce = false
+  await loadAll()
+  if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+    showToast('That note is not available for your batch and teacher.')
+  }
+}
+
+/* --------------------------------------------------------------------------------------------
+   2. Silent activity tracking. Fire and forget: a failed log must never block a note.
+   -------------------------------------------------------------------------------------------- */
+function logActivity(type, referenceId, title) {
+  const key = `${type}:${cleanLine(referenceId, 64)}`
+  if (!state.session || logged.has(key)) return
+  logged.add(key)
+  void client.rpc('log_student_activity', {
+    p_device_token: state.session.device_token,
+    p_type: type,
+    p_ref_id: cleanLine(referenceId, 64) || null,
+    p_ref_title: cleanLine(title, 160),
+  }).catch(() => { /* tracking is best effort */ })
+}
+
 function meetingState(row, now = Date.now()) {
   if (!row) return 'ended'
   if (cleanLine(row.status, 20) === 'ended') return 'ended'
@@ -659,6 +434,8 @@ function meetingCard(row) {
     join.target = '_blank'
     join.rel = 'noopener noreferrer'
     join.setAttribute('aria-label', `Join ${meetingHeading(row)}`)
+    // The only class signal the teacher gets: a real tap on the live link.
+    join.addEventListener('click', () => logActivity('class_attended', row.id, meetingHeading(row)))
     article.append(join)
   } else {
     // Scheduled: the link is visible but inactive until the start time arrives.
@@ -730,10 +507,11 @@ function openBlob(blob, fileName, download) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
-function fileAction(label, path, fileName, download, primary = false) {
+function fileAction(label, path, fileName, download, primary = false, onOpen) {
   const button = elem('button', `action-btn${primary ? ' primary' : ''}`, label)
   button.type = 'button'
   button.addEventListener('click', () => {
+    if (onOpen) onOpen()
     void fetchFile(path)
       .then((blob) => openBlob(blob, fileName, download))
       .catch(() => showToast('Could not open this file. Check your connection and try again.'))
@@ -741,9 +519,10 @@ function fileAction(label, path, fileName, download, primary = false) {
   return button
 }
 
-function makeAction(label, href, fileName, primary = false) {
+function makeAction(label, href, fileName, primary = false, onOpen) {
   const link = elem('a', `action-btn${primary ? ' primary' : ''}`, label)
   link.href = href
+  if (onOpen) link.addEventListener('click', onOpen)
   if (fileName) {
     link.download = fileName
   } else {
@@ -804,13 +583,18 @@ function noteCard(note) {
   card.append(top, elem('h3', 'note-title', cleanLine(note.title, 160) || 'Untitled note'))
 
   const actions = elem('div', 'note-actions')
+  // One report per note per visit; the database also folds repeats inside five minutes.
+  const touchNote = () => logActivity('note_opened', note.id, cleanLine(note.title, 160))
   if (note.kind === 'file') {
     const name = cleanLine(note.file_name, 255) || 'Study material'
     const size = formatBytes(note.file_size)
     card.append(elem('p', 'note-detail', `${name}${size ? ` · ${size}` : ''}${cleanLine(note.mime_type, 160) ? ` · ${cleanLine(note.mime_type, 160)}` : ''}`))
     const path = cleanLine(note.storage_path || note.file_path, 500)
     if (path) {
-      actions.append(fileAction('Open', path, name, false, true), fileAction('Download', path, name, true))
+      actions.append(
+        fileAction('Open', path, name, false, true, touchNote),
+        fileAction('Download', path, name, true, false, touchNote),
+      )
     } else {
       actions.append(elem('span', 'action-btn', 'File unavailable'))
     }
@@ -820,7 +604,7 @@ function noteCard(note) {
       let host = 'Open the shared resource'
       try { host = `Shared from ${new URL(href).host.replace(/^www\./, '')}` } catch { /* keep fallback */ }
       card.append(elem('p', 'note-detail', host))
-      actions.append(makeAction('Open link ↗', href, '', true), copyButton('Copy link', href))
+      actions.append(makeAction('Open link ↗', href, '', true, touchNote), copyButton('Copy link', href))
     } else {
       card.append(elem('p', 'note-detail', 'This link is not available.'))
     }
@@ -828,7 +612,7 @@ function noteCard(note) {
     const body = cleanBody(note.body, 20000)
     card.append(elem('pre', 'note-body', body))
     const blobUrl = URL.createObjectURL(new Blob([body], { type: 'text/plain;charset=utf-8' }))
-    const download = makeAction('Download .txt', blobUrl, `${downloadName(note.title)}.txt`)
+    const download = makeAction('Download .txt', blobUrl, `${downloadName(note.title)}.txt`, false, touchNote)
     download.addEventListener('click', () => window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1500), { once: true })
     actions.append(download, copyButton('Copy note', body))
   }
@@ -942,23 +726,6 @@ function renderFatal(message) {
   els.notesList.replaceChildren(elem('div', 'glass empty-card', message))
 }
 
-async function loadDirectory() {
-  const { data, error } = await client
-    .from('student_hub_directory')
-    .select('batch_name,teacher_id,teacher_name')
-    .limit(500)
-  if (error) throw error
-  const rows = Array.isArray(data) ? data : []
-  state.directory = rows
-    .map((row) => ({
-      batch: cleanLine(row.batch_name, 80),
-      id: cleanLine(row.teacher_id, 64),
-      name: cleanLine(row.teacher_name, 120) || 'Your teacher',
-    }))
-    .filter((row) => row.batch && row.id)
-  state.batches = [...new Set(state.directory.map((row) => row.batch))].sort((a, b) => a.localeCompare(b))
-}
-
 /** Fallback for projects that have not applied the snapshot RPC yet: still BOTH filters, SELECT only. */
 async function readDirect() {
   const fields = 'id,teacher_id,teacher_name,batch_name,title,subject,kind,body,file_path,file_name,mime_type,file_size,folder_id,folder_name,created_at'
@@ -1066,62 +833,9 @@ function bindControls() {
   els.search.addEventListener('input', () => { state.query = els.search.value; renderNotes() })
   els.subjectFilter.addEventListener('change', () => { state.subject = els.subjectFilter.value; renderNotes() })
   els.kindFilter.addEventListener('change', () => { state.kind = els.kindFilter.value; renderNotes() })
-  els.onboardingForm.addEventListener('submit', submitOnboarding)
-  // Switching batch rewrites both lists on the spot: teachers from the directory, names from the
-  // access list the teacher published. The two can never disagree with the batch on screen.
-  els.batchSelect.addEventListener('change', async () => {
-    const batch = cleanLine(els.batchSelect.value, 80)
-    fillTeacherOptions(batch)
-    clearOnboardingError()
-    if (els.studentSelect) {
-      els.studentSelect.disabled = true
-      els.studentSelect.replaceChildren(new Option(batch ? 'Loading names…' : 'Choose your batch first', ''))
-    }
-    await loadClassmates(batch)
-    fillStudentOptions('')
-    if (state.classmatesError) {
-      showOnboardingError('We could not load the names for this batch. Check your connection and tap Refresh.', true)
-    } else if (batch && !state.classmates.length) {
-      showOnboardingError(`No student name is allowed in ${batch} yet. Ask your teacher to switch your access on, then tap Refresh.`, true)
-    }
-  })
-  // Picking a name settles the teacher: it is the teacher who allowed that name.
-  if (els.studentSelect) els.studentSelect.addEventListener('change', () => {
-    const picked = state.classmates.find((row) => row.key === cleanLine(els.studentSelect.value, 64))
-    if (picked && els.teacherSelect) els.teacherSelect.value = picked.teacherId
-    clearOnboardingError()
-  })
-  if (els.teacherSelect) els.teacherSelect.addEventListener('change', clearOnboardingError)
-  if (els.waitingCheck) els.waitingCheck.addEventListener('click', async () => {
-    const status = await accessStatus(state.teacherId, state.studentKey)
-    if (status === 'allowed') { enterHub(); showToast('Your teacher let you in. Welcome!'); return }
-    if (status === 'blocked') {
-      stopWaiting()
-      showSetupForm()
-      showOnboardingError('Your teacher did not approve this name. Pick your name again or ask them directly.', true)
-      return
-    }
-    await loadClassmates(state.batch)
-    showWaiting('Still waiting — your teacher has not answered yet. This page checks again on its own.')
-    watchForApproval()
-  })
-  els.changeProfile.addEventListener('click', changeProfile)
-  els.teacherSwitch.addEventListener('change', () => chooseTeacher(cleanLine(els.teacherSwitch.value, 64)))
-  els.onboardingRetry.addEventListener('click', () => {
-    void (async () => {
-      try {
-        await loadDirectory()
-        state.directoryError = ''
-        showOnboarding()
-        showToast('Batch list refreshed')
-      } catch (error) {
-        state.directoryError = friendlyError(error)
-        showOnboardingError(state.directoryError, true)
-      }
-    })()
-  })
 }
 
+/** The only entry point. Link, then device, then the locked screen — in that order. */
 async function start() {
   const createClient = globalThis.supabase && globalThis.supabase.createClient
   const config = await readConfig()
@@ -1142,56 +856,45 @@ async function start() {
     global: { headers: { 'X-Client-Info': 'coaching-sathi-student-hub' } },
   })
   bindControls()
-  subscribe()
 
-  // Direct share link: .../student-hub/?note=<note_id>. Kept until the batch/teacher is known.
+  // Direct share link: .../student-hub/?note=<note_id>. Kept until the session is known.
+  let token = ''
   try {
     const params = new URLSearchParams(location.search)
+    token = cleanLine(params.get('token'), 128)
     state.deepLinkNote = cleanLine(params.get('note'), 64)
   } catch { /* no query string support */ }
 
-  try {
-    await loadDirectory()
-    state.directoryError = ''
-  } catch (error) {
-    state.directoryError = friendlyError(error)
-    state.error = state.directoryError
-    renderError()
+  // Strip the token from the address bar before anything else: it is single use, and a refresh,
+  // a bookmark or a screenshot must never replay it.
+  if (token) {
+    try {
+      const url = new URL(location.href)
+      url.searchParams.delete('token')
+      window.history.replaceState({}, '', url.toString())
+    } catch { /* history blocked */ }
   }
-  const profile = readProfile()
-  state.studentName = profile.name
-  state.studentKey = profile.student
-  state.batch = profile.batch
-  state.teacherId = profile.teacher
-  state.teachers = state.directory.filter((row) => row.batch === state.batch)
-  renderTopbar()
 
-  const needsSetup = !profile.name || !profile.student || !profile.batch || !state.batches.includes(profile.batch)
-  const status = needsSetup ? null : await accessStatus(profile.teacher, profile.student)
-
-  if (needsSetup) {
-    showOnboarding()
-    // A saved batch that no longer exists is different from "nothing published yet".
-    if (!state.directoryError && profile.batch && state.batches.length && !state.batches.includes(profile.batch)) {
-      showOnboardingError('Your saved batch is not listed any more. Please choose it again.')
-    }
-  } else if (status === 'allowed') {
-    await loadAll()
-    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
-      showToast('That note is not available for your batch and teacher.')
-    }
-  } else if (status === 'pending') {
-    // Asked before, still unanswered: show the waiting panel, not the form again.
-    els.onboarding.hidden = false
-    showWaiting(`${teacherNameFor(profile.teacher)} needs to approve ${profile.name} before the Hub opens. This page checks again on its own.`)
-    watchForApproval()
+  let session = null
+  if (token) {
+    session = await redeemToken(token)
   } else {
-    showOnboarding()
-    showOnboardingError(status === 'blocked'
-      ? 'Your teacher did not approve this name. Pick your name again to ask again, or talk to them directly.'
-      : 'This name is no longer on your batch list. Ask your teacher to add you on the Students tab, then tap Refresh.',
-      true)
+    const saved = readSession()
+    if (saved) {
+      session = await verifySession(saved.device_token)
+    }
   }
+
+  if (!session) {
+    // Nothing to show and nothing to offer: the only thing a student can do here is ask their teacher.
+    if (!els.locked || els.locked.hidden) showLocked(LOCKED_DEFAULT)
+    els.batchPill.textContent = 'No batch yet'
+    return
+  }
+
+  adoptSession(session)
+  subscribe()
+  await enterHub()
 
   window.setInterval(() => { if (!document.hidden) void loadAll() }, POLL_MS)
   window.setInterval(() => {

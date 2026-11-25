@@ -57,7 +57,12 @@ import {
   noteShareUrl,
   safeHttpUrl,
   saveMyMeeting,
-  decideHubStudent,
+  fetchStudentActivity,
+  generateMagicLink,
+  linkStateOf,
+  lastSeenLabel,
+  magicLinkUrl,
+  resetStudentDevice,
   syncHubStudents,
   signedNoteUrl,
   startsInMs,
@@ -70,7 +75,8 @@ import {
   withStartLocalDate,
   UNFILED_FOLDER,
   type DurationUnit,
-  type HubAccessStatus,
+  type HubActivity,
+  type HubStudentRow,
   type LiveMeeting,
   type MeetingStatus,
   type StudentFolder,
@@ -217,57 +223,80 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
-  /* Access requests. The roster is republished on every batch change, so a student added on the
-     Students tab can claim their name straight away; the teacher's decisions are never overwritten. */
-  const [access, setAccess] = useState<Record<string, HubAccessStatus>>({})
-  const [accessFor, setAccessFor] = useState<string | null>(null)
-  const [busyAccess, setBusyAccess] = useState<string | null>(null)
-  const accessReady = accessFor === effectiveBatch
+  /* Magic links. The roster is republished on every batch change so a student added on the Students
+     tab gets a row (and an Activity drawer) straight away. Link state is never guessed locally: the
+     database is the only thing that knows whether a phone is actually linked. */
+  const [hubRows, setHubRows] = useState<Record<string, HubStudentRow>>({})
+  const [rosterFor, setRosterFor] = useState<string | null>(null)
+  const [busyStudent, setBusyStudent] = useState<string | null>(null)
+  const [activityFor, setActivityFor] = useState<{ id: string; name: string } | null>(null)
+  const [activity, setActivity] = useState<HubActivity[] | null>(null)
+  const [activityError, setActivityError] = useState<string | null>(null)
+  const rosterReady = rosterFor === effectiveBatch
+
   useEffect(() => {
     let alive = true
-    void syncHubStudents(effectiveBatch, teacher.name, batchStudents.map((student) => ({ key: student.id, name: student.name })))
+    void syncHubStudents(effectiveBatch, teacher.name, batchStudents.map((student) => ({ name: student.name })))
       .then((rows) => {
         if (!alive) return
-        setAccess(Object.fromEntries(rows.map((row) => [row.student_key, row.status])))
-        setAccessFor(effectiveBatch)
+        setHubRows(Object.fromEntries(rows.map((row) => [row.student_id, row])))
+        setRosterFor(effectiveBatch)
       })
       .catch((cause) => {
         if (!alive) return
-        setAccessFor(effectiveBatch)
+        setRosterFor(effectiveBatch)
         setError(cloudMessage(cause, 'Could not publish this batch\'s student list.'))
       })
     return () => { alive = false }
   }, [effectiveBatch, teacher.name, batchStudents])
 
-  const statusOf = (studentId: string): HubAccessStatus => access[studentId] ?? 'pending'
-  // Requests first: the queue is the reason this card exists.
-  const orderedStudents = useMemo(
-    () => [...batchStudents].sort((a, b) => Number(statusOf(b.id) === 'pending') - Number(statusOf(a.id) === 'pending')),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [batchStudents, access],
-  )
-  const pendingCount = batchStudents.filter((student) => statusOf(student.id) === 'pending').length
-  const allowedCount = batchStudents.filter((student) => statusOf(student.id) === 'allowed').length
+  /** The published row behind a roster entry. Names are the key the teacher's workspace and the
+      database share, so a student renamed here shows up as a new (unlinked) row, not a broken one. */
+  const rowFor = (name: string): HubStudentRow | undefined => {
+    const wanted = cleanLine(name, 120).toLowerCase()
+    return Object.values(hubRows).find((row) => row.full_name.trim().toLowerCase() === wanted)
+  }
+  const linkedCount = batchStudents.filter((student) => linkStateOf(rowFor(student.name)) === 'device_linked').length
 
-  const decide = (studentId: string, name: string, status: HubAccessStatus) => {
-    const previous = statusOf(studentId)
-    setBusyAccess(studentId)
-    setAccess((prev) => ({ ...prev, [studentId]: status }))
-    void decideHubStudent(studentId, status)
-      .then((saved) => {
-        setAccess((prev) => ({ ...prev, [studentId]: saved }))
-        setStatus(saved === 'allowed'
-          ? `${name} approved — they can open the Student Hub now.`
-          : saved === 'blocked'
-            ? `${name} refused. They cannot open the Student Hub.`
-            : `${name} moved back to the waiting list.`)
-        setError(null)
-      })
-      .catch((cause: unknown) => {
-        setAccess((prev) => ({ ...prev, [studentId]: previous }))
-        setError(cloudMessage(cause, 'Could not save that decision.'))
-      })
-      .finally(() => setBusyAccess(null))
+  const copyLinkFor = (student: { name: string }) => {
+    const row = rowFor(student.name)
+    if (!row) {
+      setError(`${student.name} is still being published. Tap again in a moment.`)
+      return
+    }
+    setBusyStudent(row.student_id)
+    const relinked = row.is_activated
+    void (async () => {
+      // Switching phones: the old device token dies first, so the link about to be sent is the only one.
+      if (relinked) await resetStudentDevice(row.student_id)
+      const token = await generateMagicLink(row.student_id)
+      const url = magicLinkUrl(token)
+      await copyToClipboard(url)
+      setHubRows((prev) => ({
+        ...prev,
+        [row.student_id]: { ...row, is_activated: relinked ? false : row.is_activated, has_active_link: true },
+      }))
+      setStatus(relinked
+        ? `New link for ${student.name} copied. The old phone is unlinked and the previous link no longer works.`
+        : `Magic link for ${student.name} copied. Open it once on their phone — this row turns green when they do.`)
+      setError(null)
+    })().catch((cause: unknown) => {
+      setError(cloudMessage(cause, 'Could not create that link. Check your connection and try again.'))
+    }).finally(() => setBusyStudent(null))
+  }
+
+  const openActivity = (student: { name: string }) => {
+    const row = rowFor(student.name)
+    if (!row) {
+      setError(`${student.name} is still being published. Tap again in a moment.`)
+      return
+    }
+    setActivityFor({ id: row.student_id, name: student.name })
+    setActivity(null)
+    setActivityError(null)
+    void fetchStudentActivity(row.student_id)
+      .then(setActivity)
+      .catch((cause: unknown) => setActivityError(cloudMessage(cause, 'Could not load this student\'s activity.')))
   }
 
   const [kind, setKind] = useState<StudentNoteKind>('file')
@@ -681,8 +710,9 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       </div>
 
       {/* ------------------------------------------------------------------ who this batch is
-          Access is a request the teacher decides here: a student claims their name in the portal and
-          lands in this queue as "waiting" until it is approved. */}
+          One link per student, single use. A student opens it once on their own phone; from then on
+          the device is remembered and every row below says so. Tapping a row opens the Activity
+          drawer: when they were last here, and what they opened. */}
       <section aria-label={`Students in ${effectiveBatch}`} className="relative z-10 rounded-2xl border border-white/8 bg-white/[.03] px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-white/45">
@@ -690,79 +720,68 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
             <span className="truncate">Students in {effectiveBatch}</span>
           </p>
           <span
-            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${pendingCount ? 'bg-amber-400/12 text-amber-200 ring-amber-300/30' : 'bg-white/6 text-white/55 ring-white/10'}`}
-            aria-label={pendingCount ? `${pendingCount} waiting for approval, ${allowedCount} approved` : `${allowedCount} approved`}
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${linkedCount ? 'bg-present/12 text-present ring-present/28' : 'bg-white/6 text-white/55 ring-white/10'}`}
+            aria-label={`${linkedCount} of ${batchStudents.length} devices linked`}
           >
-            {pendingCount ? `${pendingCount} waiting` : `${allowedCount}/${batchStudents.length} approved`}
+            {linkedCount}/{batchStudents.length} linked
           </span>
         </div>
         {batchStudents.length ? (
           <>
             <ul className="mt-2.5 space-y-1.5">
-              {orderedStudents.map((student) => {
-                const state = statusOf(student.id)
-                const waiting = state === 'pending'
-                const approved = state === 'allowed'
-                const working = busyAccess === student.id
+              {batchStudents.map((student) => {
+                const row = rowFor(student.name)
+                const state = linkStateOf(row)
+                const linked = state === 'device_linked'
+                const pendingLink = state === 'active_link'
+                const working = Boolean(row) && busyStudent === row?.student_id
                 return (
                   <li
                     key={student.id}
-                    className={`flex min-h-[52px] items-center gap-2.5 rounded-xl px-3 py-2 ring-1 ${approved ? 'bg-present/8 ring-present/22' : waiting ? 'bg-amber-400/8 ring-amber-300/25' : 'bg-white/4 ring-white/8'}`}
+                    className={`flex min-h-[56px] items-center gap-2.5 rounded-xl px-3 py-2 ring-1 ${linked ? 'bg-present/8 ring-present/22' : pendingLink ? 'bg-amber-400/8 ring-amber-300/25' : 'bg-white/4 ring-white/8'}`}
                   >
-                    <span className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => openActivity(student)}
+                      aria-label={`Open activity for ${student.name}`}
+                      className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+                    >
                       <span className="flex items-center gap-1.5">
-                        <span className={`truncate text-[12.5px] font-semibold ${approved ? 'text-white' : waiting ? 'text-amber-100' : 'text-white/55'}`}>{student.name}</span>
+                        <span className={`truncate text-[12.5px] font-semibold ${linked ? 'text-white' : 'text-white/75'}`}>{student.name}</span>
                         {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/30">#{student.roll}</span> : null}
                       </span>
-                      <span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] ${approved ? 'text-present' : waiting ? 'text-amber-200' : 'text-white/35'}`}>
-                        {approved ? 'Approved' : waiting ? 'Waiting for you' : 'Refused'}
+                      <span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] ${linked ? 'text-present' : pendingLink ? 'text-amber-200' : 'text-white/35'}`}>
+                        {linked ? 'Device linked ✓' : pendingLink ? 'Active unused link' : 'No link yet'}
                       </span>
-                    </span>
-                    {waiting ? (
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={working}
-                          aria-label={`Approve ${student.name}`}
-                          onClick={() => decide(student.id, student.name, 'allowed')}
-                          className="lens glass-btn flex h-10 items-center gap-1 rounded-full px-3.5 text-[12px] font-semibold text-white disabled:opacity-40"
-                        >
-                          <Check size={13} /> Approve
-                        </button>
-                        <button
-                          type="button"
-                          disabled={working}
-                          aria-label={`Refuse ${student.name}`}
-                          onClick={() => decide(student.id, student.name, 'blocked')}
-                          className="h-10 shrink-0 rounded-full px-3 text-[12px] font-semibold text-white/45 hover:text-white/70 disabled:opacity-40"
-                        >
-                          Refuse
-                        </button>
+                      <span className="mt-0.5 block truncate text-[10.5px] text-white/35">
+                        {row ? lastSeenLabel(row.last_seen_at, now) : 'Publishing…'}
                       </span>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={working}
-                        aria-label={`${approved ? 'Revoke' : 'Approve'} ${student.name}`}
-                        onClick={() => decide(student.id, student.name, approved ? 'blocked' : 'allowed')}
-                        className={`h-10 shrink-0 rounded-full px-3.5 text-[12px] font-semibold disabled:opacity-40 ${approved ? 'bg-white/8 text-white/60 hover:text-white' : 'lens glass-btn text-white'}`}
-                      >
-                        {approved ? 'Revoke' : 'Approve'}
-                      </button>
-                    )}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={working || !row}
+                      aria-label={linked
+                        ? `Reset and generate a new link for ${student.name}`
+                        : pendingLink ? `Re-link ${student.name}` : `Generate magic link for ${student.name}`}
+                      onClick={() => copyLinkFor(student)}
+                      className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold disabled:opacity-40 ${linked || pendingLink ? 'bg-white/8 text-white/70 hover:text-white' : 'lens glass-btn text-white'}`}
+                    >
+                      {working ? <Loader2 size={13} className="animate-spin" /> : linked ? <Copy size={13} /> : <Link2 size={13} />}
+                      {linked ? 'New link' : pendingLink ? 'Re-link' : 'Generate link'}
+                    </button>
                   </li>
                 )
               })}
             </ul>
             <p className="mt-2 text-[11px] leading-snug text-white/35">
-              {accessReady
-                ? 'A student picks their name in the Student Hub and appears here as waiting. Approve to let them in.'
+              {rosterReady
+                ? 'Tap a student to see when they were last here. A link works once — after that the phone stays signed in until you send a new one.'
                 : 'Publishing this roster…'}
             </p>
           </>
         ) : (
           <p className="mt-1.5 text-[12px] leading-snug text-white/40">
-            No students in this batch yet. Add them on the Students tab — this is the list the class link gets shared with.
+            No students in this batch yet. Add them on the Students tab — a link can only be made for a real student.
           </p>
         )}
       </section>
@@ -1220,6 +1239,71 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
           <code className="truncate rounded bg-black/40 px-1.5 py-0.5">{`${studentHubUrl()}?note=<id>`}</code>
         </p>
       </section>
+
+      {/* Activity drawer: one student, everything they actually opened. Read-only by design. */}
+      {activityFor && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 pb-3 pt-10 backdrop-blur-sm sm:items-center sm:p-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Activity for ${activityFor.name}`}
+            className="glass flex max-h-[80vh] w-full max-w-md flex-col rounded-[24px] p-5"
+          >
+            <div className="flex items-start gap-3">
+              <span className={iconTile}><Clock3 size={16} /></span>
+              <div className="min-w-0 flex-1">
+                <h2 className="truncate font-display text-[16.5px] font-semibold leading-tight">{activityFor.name}</h2>
+                <p className="mt-0.5 text-[11.5px] text-white/40">
+                  {lastSeenLabel(rowFor(activityFor.name)?.last_seen_at, now)}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close activity"
+                onClick={() => setActivityFor(null)}
+                className="glass-btn grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/5 text-white/50 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
+              {activityError ? (
+                <p className="rounded-xl bg-absent/10 px-3 py-2.5 text-[12.5px] text-red-100 ring-1 ring-absent/25" role="alert">{activityError}</p>
+              ) : activity === null ? (
+                <p className="flex items-center gap-2 px-1 py-3 text-[12.5px] text-white/45">
+                  <Loader2 size={14} className="animate-spin" /> Loading activity…
+                </p>
+              ) : activity.length === 0 ? (
+                <p className="rounded-xl bg-white/4 px-3 py-3 text-[12.5px] leading-snug text-white/45 ring-1 ring-white/8">
+                  Nothing opened yet. Notes and classes appear here once they use the Hub on a linked phone.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {activity.map((entry) => (
+                    <li key={`${entry.activity_type}-${entry.created_at}-${entry.reference_title}`} className="flex items-center gap-2.5 rounded-xl bg-white/4 px-3 py-2 ring-1 ring-white/8">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/6 text-white/55">
+                        {entry.activity_type === 'note_opened' ? <BookOpen size={14} /> : <Video size={14} />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12.5px] font-semibold text-white/85">{entry.reference_title || (entry.activity_type === 'note_opened' ? 'A note' : 'A class')}</span>
+                        <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] text-white/35">
+                          {entry.activity_type === 'note_opened' ? 'Note opened' : 'Class attended'}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[10.5px] tabular-nums text-white/35">{lastSeenLabel(entry.created_at, now).replace(/^Last seen /, '')}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <p className="mt-3 text-[10.5px] leading-snug text-white/25">
+              Recorded automatically when the student opens a note or taps Join Now. Tapping the same note twice in five minutes counts once.
+            </p>
+          </div>
+        </div>
+      )}
     </motion.section>
   )
 }
