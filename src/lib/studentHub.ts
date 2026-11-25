@@ -21,11 +21,14 @@ export function shortStudentName(fullName: string): string {
   return `${first} ${last.charAt(0).toUpperCase()}.`
 }
 
+/** Where one student stands. `pending` is a request waiting for the teacher. */
+export type HubAccessStatus = 'pending' | 'allowed' | 'blocked'
+
 /** One row of the access list the class roster projects into Supabase. */
 export interface HubStudentAccess {
   student_key: string
   short_name: string
-  allowed: boolean
+  status: HubAccessStatus
 }
 export const STUDENT_NOTES_BUCKET = 'student_notes'
 export const MAX_NOTE_FILE_SIZE = 15 * 1024 * 1024
@@ -341,20 +344,20 @@ export async function syncHubStudents(
   return ((data ?? []) as HubStudentAccess[]).map((row) => ({
     student_key: row.student_key,
     short_name: row.short_name,
-    allowed: Boolean(row.allowed),
+    status: row.status === 'allowed' ? 'allowed' : row.status === 'blocked' ? 'blocked' : 'pending',
   }))
 }
 
-/** The teacher's allow switch. Returns the state the row ended up in. */
-export async function setHubStudentAccess(studentKey: string, allowed: boolean): Promise<boolean> {
+/** The teacher's decision on one request. Returns the state the row ended up in. */
+export async function decideHubStudent(studentKey: string, status: HubAccessStatus): Promise<HubAccessStatus> {
   const key = cleanLine(studentKey, 64)
   if (!key) throw new Error('Choose a student first.')
-  const { data, error } = await sb().rpc('set_my_hub_student_access', {
+  const { data, error } = await sb().rpc('decide_my_hub_student', {
     p_student_key: key,
-    p_allowed: allowed,
+    p_status: status,
   })
   if (error) throw error
-  return Boolean(data)
+  return data === 'allowed' ? 'allowed' : data === 'blocked' ? 'blocked' : 'pending'
 }
 
 export async function deleteMeeting(meetingId: string): Promise<void> {

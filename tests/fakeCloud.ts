@@ -58,7 +58,7 @@ interface HubStudentRow {
   teacher_name: string
   student_key: string
   short_name: string
-  allowed: boolean
+  status: 'pending' | 'allowed' | 'blocked'
 }
 
 const db = {
@@ -320,23 +320,30 @@ const storageFrom = (bucket: string) => ({
       const batch = clean(args.p_batch_name, 80)
       if (!batch) return err('invalid student hub scope', '22023')
       const rows = db.hubStudents
-        .filter((row) => row.allowed && row.batch_name === batch)
+        .filter((row) => row.batch_name === batch && row.status !== 'blocked')
         .sort((a, b) => a.short_name.localeCompare(b.short_name))
         .map((row) => ({
           teacher_id: row.teacher_id,
           teacher_name: row.teacher_name,
           student_key: row.student_key,
           short_name: row.short_name,
+          status: row.status,
         }))
       return { data: rows, error: null }
     }
-    if (name === 'student_hub_student_allowed') {
+    if (name === 'student_hub_request_access') {
       const teacherId = clean(args.p_teacher_id, 64)
       const key = clean(args.p_student_key, 64)
-      return {
-        data: db.hubStudents.some((row) => row.teacher_id === teacherId && row.student_key === key && row.allowed),
-        error: null,
-      }
+      const row = db.hubStudents.find((entry) => entry.teacher_id === teacherId && entry.student_key === key)
+      if (!row) return err('this name is not on the list any more', '22023')
+      if (row.status !== 'allowed') row.status = 'pending'
+      return { data: row.status, error: null }
+    }
+    if (name === 'student_hub_student_status') {
+      const teacherId = clean(args.p_teacher_id, 64)
+      const key = clean(args.p_student_key, 64)
+      const row = db.hubStudents.find((entry) => entry.teacher_id === teacherId && entry.student_key === key)
+      return { data: row ? row.status : null, error: null }
     }
     const me = currentUser()
     if (!me) return err('not authenticated', '28000')
@@ -604,12 +611,12 @@ export const fakeCloud = {
         keep.push(key)
         const row = db.hubStudents.find((entry) => entry.teacher_id === me.id && entry.student_key === key)
         if (row) {
-          // The allow flag is preserved: a re-sync never silently opens access.
+          // The teacher's decision is preserved: a re-sync never silently opens access.
           row.batch_name = batch
           row.teacher_name = teacherName
           row.short_name = short
         } else {
-          db.hubStudents.push({ teacher_id: me.id, batch_name: batch, teacher_name: teacherName, student_key: key, short_name: short, allowed: false })
+          db.hubStudents.push({ teacher_id: me.id, batch_name: batch, teacher_name: teacherName, student_key: key, short_name: short, status: 'pending' })
         }
       }
       // Scoped to this batch: syncing another batch must never wipe this roster.
@@ -618,16 +625,18 @@ export const fakeCloud = {
         data: db.hubStudents
           .filter((row) => row.teacher_id === me.id)
           .sort((a, b) => a.short_name.localeCompare(b.short_name))
-          .map((row) => ({ student_key: row.student_key, short_name: row.short_name, allowed: row.allowed })),
+          .map((row) => ({ student_key: row.student_key, short_name: row.short_name, status: row.status })),
         error: null,
       }
     }
-    if (name === 'set_my_hub_student_access') {
+    if (name === 'decide_my_hub_student') {
       const key = clean(args.p_student_key, 64)
+      const status = clean(args.p_status, 12)
+      if (!['pending', 'allowed', 'blocked'].includes(status)) return err('unknown access state', '22023')
       const row = db.hubStudents.find((entry) => entry.teacher_id === me.id && entry.student_key === key)
-      if (!row) return err('no such student', '22023')
-      row.allowed = Boolean(args.p_allowed)
-      return { data: row.allowed, error: null }
+      if (!row) return err('this student is not in your roster yet', '22023')
+      row.status = status as HubStudentRow['status']
+      return { data: row.status, error: null }
     }
     if (name === 'delete_me') {
       db.touched = true

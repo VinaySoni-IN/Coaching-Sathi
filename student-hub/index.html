@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=8" />
+    <link rel="stylesheet" href="./styles.css?v=9" />
   </head>
   <body>
     <div class="ambient" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span></div>
@@ -107,7 +107,7 @@
         <span class="brand-mark" aria-hidden="true">CS</span>
         <p class="eyebrow">Welcome to Coaching Sathi</p>
         <h2 id="onboarding-title">Let's set up your hub</h2>
-        <p class="onboarding-sub">Pick your batch, then your name from the list your teacher allowed. One screen, then straight into class — saved on this device only.</p>
+        <p class="onboarding-sub">Pick your batch and tap your name. Your teacher approves you once, then this device remembers — no password.</p>
         <form id="onboarding-form" novalidate>
           <label class="form-field">
             <span>Your name</span>
@@ -131,8 +131,15 @@
           </label>
           <p id="onboarding-error" class="form-error" role="alert" hidden></p>
           <button id="onboarding-retry" type="button" class="retry-btn" hidden>Refresh batches</button>
-          <button type="submit" class="join-btn onboarding-submit">Continue to Student Hub →</button>
+          <button type="submit" class="join-btn onboarding-submit">Ask my teacher to let me in →</button>
         </form>
+        <!-- Shown instead of the form while the teacher's decision is pending. -->
+        <div id="onboarding-waiting" class="onboarding-waiting" hidden>
+          <span class="waiting-dot" aria-hidden="true"></span>
+          <h3 id="waiting-title">Waiting for your teacher</h3>
+          <p id="waiting-text" class="onboarding-sub"></p>
+          <button id="waiting-check" type="button" class="join-btn onboarding-submit">Check again</button>
+        </div>
         <p class="onboarding-note">Read-only portal · your teacher manages all content</p>
       </div>
     </div>
@@ -141,6 +148,6 @@
 
     <!-- Relative paths only: works from /student-hub/ on GitHub Pages and from dist/student-hub/ on Vercel. -->
     <script src="./vendor/supabase.js"></script>
-    <script type="module" src="./portal.js?v=7"></script>
+    <script type="module" src="./portal.js?v=8"></script>
   </body>
 </html>

@@ -30,12 +30,16 @@ const els = {
   teacherSwitch: document.getElementById('teacher-switch'),
   changeProfile: document.getElementById('change-profile'),
   onboarding: document.getElementById('onboarding'),
-  onboardingForm: document.getElementById('onboarding-form'),
   studentSelect: document.getElementById('student-select'),
   batchSelect: document.getElementById('batch-select'),
   onboardingError: document.getElementById('onboarding-error'),
   onboardingRetry: document.getElementById('onboarding-retry'),
   teacherSelect: document.getElementById('teacher-select'),
+  onboardingForm: document.getElementById('onboarding-form'),
+  waiting: document.getElementById('onboarding-waiting'),
+  waitingTitle: document.getElementById('waiting-title'),
+  waitingText: document.getElementById('waiting-text'),
+  waitingCheck: document.getElementById('waiting-check'),
   liveContent: document.getElementById('live-content'),
   syncLabel: document.getElementById('sync-label'),
   syncBanner: document.getElementById('sync-banner'),
@@ -299,6 +303,7 @@ async function loadClassmates(batch) {
         teacherName: cleanLine(row.teacher_name, 120),
         key: cleanLine(row.student_key, 64),
         short: cleanLine(row.short_name, 40),
+        status: cleanLine(row.status, 12) === 'allowed' ? 'allowed' : 'pending',
       }))
       .filter((row) => row.key && row.short && row.teacherId)
   } catch {
@@ -335,6 +340,76 @@ function fillStudentOptions(selectedKey = '') {
   els.studentSelect.disabled = undecided || !state.classmates.length
 }
 
+let waitTimer = 0
+
+function stopWaiting() {
+  if (waitTimer) window.clearTimeout(waitTimer)
+  waitTimer = 0
+}
+
+/** The form is for asking; this panel is for waiting. Only one of them is ever on screen. */
+function showWaiting(message) {
+  if (els.onboardingForm) els.onboardingForm.hidden = true
+  if (els.waiting) els.waiting.hidden = false
+  if (els.waitingText) els.waitingText.textContent = message
+  if (els.waitingTitle) els.waitingTitle.textContent = 'Waiting for your teacher'
+}
+
+function showSetupForm() {
+  stopWaiting()
+  if (els.waiting) els.waiting.hidden = true
+  if (els.onboardingForm) els.onboardingForm.hidden = false
+}
+
+/** Ask the database where this claim stands: 'pending' | 'allowed' | 'blocked' | null. */
+async function accessStatus(teacherId, studentKey) {
+  if (!client || !teacherId || !studentKey) return null
+  try {
+    const { data, error } = await client.rpc('student_hub_student_status', {
+      p_teacher_id: teacherId,
+      p_student_key: studentKey,
+    })
+    if (error) throw error
+    return cleanLine(data, 12) || null
+  } catch {
+    return null
+  }
+}
+
+function enterHub() {
+  stopWaiting()
+  els.onboarding.hidden = true
+  showSetupForm()
+  clearOnboardingError()
+  renderTopbar()
+  state.loadedOnce = false
+  void loadAll().then(() => {
+    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
+      showToast('That note is not available for your batch and teacher.')
+    }
+  })
+}
+
+/** While the student waits, the page re-asks every few seconds — no refresh needed. */
+function watchForApproval() {
+  stopWaiting()
+  waitTimer = window.setTimeout(async () => {
+    const status = await accessStatus(state.teacherId, state.studentKey)
+    if (status === 'allowed') {
+      enterHub()
+      showToast('Your teacher let you in. Welcome!')
+      return
+    }
+    if (status === 'blocked') {
+      stopWaiting()
+      showSetupForm()
+      showOnboardingError('Your teacher did not approve this name. Pick your name again or ask them directly.', true)
+      return
+    }
+    watchForApproval()
+  }, 5000)
+}
+
 function showOnboarding() {
   els.batchSelect.replaceChildren()
   const placeholder = document.createElement('option')
@@ -369,11 +444,12 @@ function showOnboarding() {
   } else if (!state.batches.length) {
     showOnboardingError('No batches are listed yet. Ask your teacher to add your batch, then tap Refresh.', true)
   }
+  showSetupForm()
   els.onboarding.hidden = false
   try { els.studentSelect.focus() } catch { /* not focusable in some environments */ }
 }
 
-function submitOnboarding(event) {
+async function submitOnboarding(event) {
   event.preventDefault()
   const batch = cleanLine(els.batchSelect.value, 80)
   if (!batch || !state.batches.includes(batch)) {
@@ -383,48 +459,66 @@ function submitOnboarding(event) {
   const studentKey = cleanLine(els.studentSelect ? els.studentSelect.value : '', 64)
   const chosen = state.classmates.find((row) => row.key === studentKey)
   if (!chosen) {
-    showOnboardingError('Pick your name from the list. Only names your teacher allowed appear there.', !state.classmates.length)
+    showOnboardingError('Tap your name in the list. Every student of the batch is there once the teacher opens the Hub.', !state.classmates.length)
     return
   }
   const teachers = teachersForBatch(batch)
   if (!teachers.length) {
-    // Nothing to scope to yet: say who to ask and let them retry without leaving the dialog.
     showOnboardingError(`No teacher is listed for ${batch} yet. Ask your teacher to share a note or start a class, then tap Refresh.`, true)
     return
   }
-  // The teacher is a fact, not a preference: this name was allowed by exactly one of them.
-  const teacher = teachers.find((row) => row.id === chosen.teacherId)
-    || { id: chosen.teacherId, name: chosen.teacherName, batch }
-  if (els.teacherSelect && els.teacherSelect.value !== teacher.id) els.teacherSelect.value = teacher.id
+
+  // The claim is what the teacher approves; the teacher is whoever owns this name.
   state.studentName = chosen.short
   state.studentKey = chosen.key
   state.batch = batch
-  state.teacherId = teacher.id
+  state.teacherId = chosen.teacherId
   state.teachers = teachers
-  writeProfile({ name: chosen.short, batch, teacher: teacher.id, student: chosen.key })
-  els.onboarding.hidden = true
-  clearOnboardingError()
+  writeProfile({ name: chosen.short, batch, teacher: chosen.teacherId, student: chosen.key })
   renderTopbar()
-  state.loadedOnce = false
-  void loadAll().then(() => {
-    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
-      showToast('That note is not available for your batch and teacher.')
-    }
-  })
+  clearOnboardingError()
+
+  let status = 'pending'
+  try {
+    const { data, error } = await client.rpc('student_hub_request_access', {
+      p_teacher_id: chosen.teacherId,
+      p_student_key: chosen.key,
+    })
+    if (error) throw error
+    status = cleanLine(data, 12) || 'pending'
+  } catch {
+    showOnboardingError('We could not send your request just now. Check your connection and try again.', true)
+    return
+  }
+
+  if (status === 'allowed') {
+    enterHub()
+    return
+  }
+  showWaiting(`You asked ${chosen.teacherName || 'your teacher'} to let ${chosen.short} into ${batch}. They need to approve you — this page checks again on its own.`)
+  watchForApproval()
 }
 
-function chooseTeacher(id) {
+async function chooseTeacher(id) {
   const teacher = state.teachers.find((row) => row.id === id)
   if (!teacher) return
   state.teacherId = teacher.id
   writeProfile({ name: state.studentName, batch: state.batch, teacher: teacher.id, student: state.studentKey })
   renderTopbar()
-  state.loadedOnce = false
-  void loadAll().then(() => {
-    if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
-      showToast('That note is not available for your batch and teacher.')
-    }
-  })
+  const status = await accessStatus(state.teacherId, state.studentKey)
+  if (status === 'allowed') {
+    enterHub()
+    return
+  }
+  if (status === 'pending') {
+    els.onboarding.hidden = false
+    showWaiting(`${teacher.name} still needs to approve ${state.studentName || 'you'}. This page checks again on its own.`)
+    watchForApproval()
+    return
+  }
+  els.onboarding.hidden = false
+  showOnboarding()
+  showOnboardingError('This name is not approved yet. Pick your name again to ask again.')
 }
 
 function changeProfile() {
@@ -998,6 +1092,19 @@ function bindControls() {
     clearOnboardingError()
   })
   if (els.teacherSelect) els.teacherSelect.addEventListener('change', clearOnboardingError)
+  if (els.waitingCheck) els.waitingCheck.addEventListener('click', async () => {
+    const status = await accessStatus(state.teacherId, state.studentKey)
+    if (status === 'allowed') { enterHub(); showToast('Your teacher let you in. Welcome!'); return }
+    if (status === 'blocked') {
+      stopWaiting()
+      showSetupForm()
+      showOnboardingError('Your teacher did not approve this name. Pick your name again or ask them directly.', true)
+      return
+    }
+    await loadClassmates(state.batch)
+    showWaiting('Still waiting — your teacher has not answered yet. This page checks again on its own.')
+    watchForApproval()
+  })
   els.changeProfile.addEventListener('click', changeProfile)
   els.teacherSwitch.addEventListener('change', () => chooseTeacher(cleanLine(els.teacherSwitch.value, 64)))
   els.onboardingRetry.addEventListener('click', () => {
@@ -1059,26 +1166,31 @@ async function start() {
   state.teachers = state.directory.filter((row) => row.batch === state.batch)
   renderTopbar()
 
-  if (!profile.name || !profile.student || !profile.batch || !state.batches.includes(profile.batch)) {
+  const needsSetup = !profile.name || !profile.student || !profile.batch || !state.batches.includes(profile.batch)
+  const status = needsSetup ? null : await accessStatus(profile.teacher, profile.student)
+
+  if (needsSetup) {
     showOnboarding()
     // A saved batch that no longer exists is different from "nothing published yet".
     if (!state.directoryError && profile.batch && state.batches.length && !state.batches.includes(profile.batch)) {
       showOnboardingError('Your saved batch is not listed any more. Please choose it again.')
     }
-  } else if (!(await stillAllowed(profile.teacher, profile.student))) {
-    // Access can be taken away after setup, so it is re-checked on every visit.
-    showOnboarding()
-    showOnboardingError('Your teacher has not allowed this name into the Student Hub. Ask them to switch your access on, then tap Refresh.')
-  } else if (!profile.teacher || !state.teachers.some((teacher) => teacher.id === profile.teacher)) {
-    // Setup is one dialog: a stale or missing teacher simply re-opens it, filled in, with the fix named.
-    state.teacherId = ''
-    showOnboarding()
-    showOnboardingError('Choose your teacher to finish setting up.')
-  } else {
+  } else if (status === 'allowed') {
     await loadAll()
     if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
       showToast('That note is not available for your batch and teacher.')
     }
+  } else if (status === 'pending') {
+    // Asked before, still unanswered: show the waiting panel, not the form again.
+    els.onboarding.hidden = false
+    showWaiting(`${teacherNameFor(profile.teacher)} needs to approve ${profile.name} before the Hub opens. This page checks again on its own.`)
+    watchForApproval()
+  } else {
+    showOnboarding()
+    showOnboardingError(status === 'blocked'
+      ? 'Your teacher did not approve this name. Pick your name again to ask again, or talk to them directly.'
+      : 'This name is no longer on your batch list. Ask your teacher to add you on the Students tab, then tap Refresh.',
+      true)
   }
 
   window.setInterval(() => { if (!document.hidden) void loadAll() }, POLL_MS)
@@ -1089,26 +1201,6 @@ async function start() {
   globalThis.addEventListener('pagehide', () => {
     if (client && channel) client.removeChannel(channel)
   })
-}
-
-/**
- * Ask the database whether this name is still allowed. A network failure must not lock a student out
- * of their own classroom, so an unreachable check fails open — the content reads stay scope-protected
- * by RLS either way.
- */
-async function stillAllowed(teacherId, studentKey) {
-  if (!client) return true
-  if (!teacherId || !studentKey) return false
-  try {
-    const { data, error } = await client.rpc('student_hub_student_allowed', {
-      p_teacher_id: teacherId,
-      p_student_key: studentKey,
-    })
-    if (error) throw error
-    return data === true
-  } catch {
-    return true
-  }
 }
 
 void start()
