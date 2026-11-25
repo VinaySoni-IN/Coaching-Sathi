@@ -59,10 +59,12 @@ import {
   saveMyMeeting,
   fetchStudentActivity,
   generateMagicLink,
+  isAccessPaused,
   linkStateOf,
   lastSeenLabel,
   magicLinkUrl,
   resetStudentDevice,
+  setStudentAccess,
   syncHubStudents,
   signedNoteUrl,
   startsInMs,
@@ -283,6 +285,24 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
     })().catch((cause: unknown) => {
       setError(cloudMessage(cause, 'Could not create that link. Check your connection and try again.'))
     }).finally(() => setBusyStudent(null))
+  }
+
+  /** Pause/resume is the switch that makes access_status mean something on the server. */
+  const toggleAccess = (student: { name: string }) => {
+    const row = rowFor(student.name)
+    if (!row) return
+    const next = isAccessPaused(row.access_status) ? 'active' : 'suspended'
+    setBusyStudent(row.student_id)
+    void setStudentAccess(row.student_id, next)
+      .then((saved) => {
+        setHubRows((prev) => ({ ...prev, [row.student_id]: { ...row, access_status: saved } }))
+        setStatus(isAccessPaused(saved)
+          ? `${student.name} is paused — their Hub shows a paused notice until you resume them.`
+          : `${student.name} can read their batch again. Send a new link to that phone.`)
+        setError(null)
+      })
+      .catch((cause: unknown) => setError(cloudMessage(cause, 'Could not change that access.')))
+      .finally(() => setBusyStudent(null))
   }
 
   const openActivity = (student: { name: string }) => {
@@ -754,7 +774,9 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
                         {linked ? 'Device linked ✓' : pendingLink ? 'Active unused link' : 'No link yet'}
                       </span>
                       <span className="mt-0.5 block truncate text-[10.5px] text-white/35">
-                        {row ? lastSeenLabel(row.last_seen_at, now) : 'Publishing…'}
+                        {row
+                          ? `${lastSeenLabel(row.last_seen_at, now)}${isAccessPaused(row.access_status) ? ' · Paused' : ''}`
+                          : 'Publishing…'}
                       </span>
                     </button>
                     <button
@@ -1298,8 +1320,19 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
               )}
             </div>
 
+            <button
+              type="button"
+              onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) toggleAccess(student) }}
+              className={`mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-full text-[12.5px] font-semibold ${isAccessPaused(rowFor(activityFor.name)?.access_status)
+                ? 'lens glass-btn text-white'
+                : 'bg-white/8 text-white/60 hover:text-white'}`}
+            >
+              {isAccessPaused(rowFor(activityFor.name)?.access_status) ? 'Resume batch access' : 'Pause batch access'}
+            </button>
+
             <p className="mt-3 text-[10.5px] leading-snug text-white/25">
               Recorded automatically when the student opens a note or taps Join Now. Tapping the same note twice in five minutes counts once.
+              Pausing closes their batch immediately; resuming reopens it without a new link.
             </p>
           </div>
         </div>

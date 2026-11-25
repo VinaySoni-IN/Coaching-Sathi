@@ -12,6 +12,9 @@ export const STUDENT_HUB_PATH = './student-hub/'
 /** How a student's link stands, in the order the teacher cares about it. */
 export type HubLinkState = 'device_linked' | 'active_link' | 'no_link'
 
+/** 'active' and 'paid' both read; the other two are paused by the teacher. */
+export type HubAccessState = 'active' | 'paid' | 'suspended' | 'unpaid'
+
 /** One row of the roster, as the database reports it after a sync. */
 export interface HubStudentRow {
   student_id: string
@@ -19,6 +22,12 @@ export interface HubStudentRow {
   is_activated: boolean
   has_active_link: boolean
   last_seen_at: string | null
+  access_status: HubAccessState
+}
+
+/** True when the teacher has paused this student's batch access. */
+export function isAccessPaused(status: string | null | undefined): boolean {
+  return status === 'suspended' || status === 'unpaid'
 }
 
 /** One line of the teacher's Activity drawer. */
@@ -380,6 +389,9 @@ export async function syncHubStudents(
     is_activated: Boolean(row.is_activated),
     has_active_link: Boolean(row.has_active_link),
     last_seen_at: row.last_seen_at ?? null,
+    access_status: (row.access_status === 'paid' || row.access_status === 'suspended' || row.access_status === 'unpaid')
+      ? row.access_status
+      : 'active',
   }))
 }
 
@@ -399,6 +411,14 @@ export async function resetStudentDevice(studentId: string): Promise<void> {
   const { data, error } = await sb().rpc('reset_student_device', { p_student_id: studentId })
   if (error) throw error
   if (data !== true) throw new Error('That device could not be unlinked.')
+}
+
+/** Pause or resume a student's batch access. Pausing also drops their device token server-side. */
+export async function setStudentAccess(studentId: string, status: HubAccessState): Promise<HubAccessState> {
+  const { data, error } = await sb().rpc('set_student_access', { p_student_id: studentId, p_status: status })
+  if (error) throw error
+  const saved = String(data ?? '')
+  return (saved === 'paid' || saved === 'suspended' || saved === 'unpaid') ? saved : 'active'
 }
 
 /** Everything this student opened, newest first. */

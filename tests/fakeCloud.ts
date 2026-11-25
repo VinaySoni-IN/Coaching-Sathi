@@ -60,6 +60,7 @@ interface HubStudentRow {
   device_token: string | null
   is_activated: boolean
   last_seen_at: string | null
+  access_status: 'active' | 'paid' | 'suspended' | 'unpaid'
   created_at: string
 }
 interface MagicLinkRow {
@@ -416,21 +417,50 @@ export const fakeCloud = {
   from,
   storage: { from: storageFrom },
   rpc: async (name: string, args: Record<string, unknown> = {}) => {
-    // The snapshot RPC is intentionally anon-safe and read-only: no session required.
-    if (name === 'student_hub_snapshot') {
-      const batch = clean(args.p_batch_name, 80)
-      const teacherId = clean(args.p_teacher_id, 64)
-      if (!batch || !teacherId) return err('invalid student hub scope', '22023')
-      const meeting = [...db.meetings.values()].find((row) => row.teacher_id === teacherId && row.batch_name === batch && row.is_live) ?? null
+    // --- The only content path: a device token in, that student's own batch out. ---
+    if (name === 'get_student_batch_data') {
+      const token = clean(args.p_device_token, 200)
+      const student = token ? db.hubStudents.find((entry) => entry.device_token === token) : undefined
+      if (!student) return { data: { error: 'Unauthorized or inactive batch access' }, error: null }
+      if (student.access_status !== 'active' && student.access_status !== 'paid') {
+        return { data: { error: 'Batch access paused. Please contact your teacher.' }, error: null }
+      }
+      student.last_seen_at = stampNow()
+      const teacher = db.profiles.get(student.teacher_id)
+      const inBatch = (row: { batch_name: string; teacher_id: string }) =>
+        row.teacher_id === student.teacher_id
+        && row.batch_name.trim().toLowerCase() === student.batch_name.trim().toLowerCase()
       return {
         data: {
-          meeting,
-          folders: db.folders.filter((row) => row.teacher_id === teacherId && row.batch_name === batch),
-          notes: db.notes.filter((row) => row.teacher_id === teacherId && row.batch_name === batch),
+          student_id: student.id,
+          full_name: student.full_name,
+          batch_name: student.batch_name,
+          teacher_id: student.teacher_id,
+          teacher_name: teacher?.name || 'Your teacher',
+          access_status: student.access_status,
+          meetings: db.meetings.filter(inBatch),
+          folders: db.folders.filter(inBatch),
+          notes: db.notes.filter(inBatch),
         },
         error: null,
       }
     }
+    if (name === 'get_single_student_note') {
+      const token = clean(args.p_device_token, 200)
+      const student = token ? db.hubStudents.find((entry) => entry.device_token === token) : undefined
+      if (!student) return { data: { error: 'Unauthorized or inactive batch access' }, error: null }
+      if (student.access_status !== 'active' && student.access_status !== 'paid') {
+        return { data: { error: 'Batch access paused. Please contact your teacher.' }, error: null }
+      }
+      const note = db.notes.find((entry) => entry.id === String(args.p_note_id ?? ''))
+      if (!note
+        || note.teacher_id !== student.teacher_id
+        || note.batch_name.trim().toLowerCase() !== student.batch_name.trim().toLowerCase()) {
+        return { data: { error: 'Access Denied · This note belongs to another batch.' }, error: null }
+      }
+      return { data: { note }, error: null }
+    }
+
     // --- Student-side RPCs: anon by design, keyed by the secret itself, never by a name. ---
     if (name === 'redeem_magic_link') {
       const token = clean(args.p_token, 128)
@@ -471,6 +501,7 @@ export const fakeCloud = {
           batch_name: student.batch_name,
           teacher_id: student.teacher_id,
           teacher_name: teacher?.name || 'Your teacher',
+          access_status: student.access_status,
         },
         error: null,
       }
@@ -684,6 +715,7 @@ export const fakeCloud = {
             device_token: null,
             is_activated: false,
             last_seen_at: null,
+            access_status: 'active',
             created_at: stampNow(),
           })
         }
@@ -699,6 +731,7 @@ export const fakeCloud = {
             is_activated: row.is_activated,
             has_active_link: db.magicLinks.some((link) => link.student_id === row.id && !link.is_used),
             last_seen_at: row.last_seen_at,
+            access_status: row.access_status,
           })),
         error: null,
       }
@@ -731,6 +764,14 @@ export const fakeCloud = {
         if (link.student_id === row.id && !link.is_used) { link.is_used = true; link.used_at = stampNow() }
       })
       return { data: true, error: null }
+    }
+    if (name === 'set_student_access') {
+      const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
+      if (!row) return err('this student is not on your roster', '22023')
+      const status = clean(args.p_status, 20)
+      if (!['active', 'paid', 'suspended', 'unpaid'].includes(status)) return err('unknown access state', '22023')
+      row.access_status = status as HubStudentRow['access_status']
+      return { data: status, error: null }
     }
     if (name === 'my_student_activity') {
       const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)

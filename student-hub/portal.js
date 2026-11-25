@@ -3,9 +3,10 @@
    student opens .../student-hub/?token=<64 hex>. The link is redeemed by a security-definer RPC, which
    mints a device token; the device keeps it, the URL is cleaned, and every later visit re-verifies the
    token and refreshes last_seen_at. No name list, no signup, no guest mode.
-   The Teacher App owns every write. This page uses the anonymous key, SELECTs scoped by two headers,
-   and four RPCs: redeem_magic_link, verify_student_session, log_student_activity and the read-only
-   student_hub_snapshot. It never calls INSERT/UPDATE/DELETE and never holds a privileged key.
+   The Teacher App owns every write. This page uses the anonymous key and RPCs only: it issues no
+   table selects at all, because anon has no SELECT left on live_meetings / notes / folders. Content
+   arrives through get_student_batch_data, which decides the batch from the device token — the client
+   never names a batch, so editing localStorage cannot widen what it sees.
    Sections: 0) session  1) locked / redeem  2) live + scheduled classes  3) notes (+ ?note= links)
              4) data loading + realtime/polling. */
 
@@ -50,6 +51,8 @@ const state = {
   batch: '',
   teacherId: '',
   teacherName: '',
+  accessStatus: '',
+  verified: false,
   meeting: null,
   meetings: [],
   deepLinkNote: '',
@@ -136,14 +139,11 @@ function teacherNameFor() {
   return state.teacherName || 'Your teacher'
 }
 
-/** Attach the DB-side scope to one PostgREST query. RLS reads both headers on the server. */
-function scoped(query) {
-  return query
-    .setHeader('X-Student-Hub-Batch', state.batch)
-    .setHeader('X-Student-Hub-Teacher-Id', state.teacherId)
-}
-
-/** Same scope for a direct Storage fetch. Only the public anon key is used. */
+/**
+ * Storage is the one place a header is still involved, and both values come from
+ * get_student_batch_data — the server's answer, never localStorage. A file path only ever arrives
+ * with that same answer, so a student can reach files of their own batch and nothing else.
+ */
 function scopeHeaders() {
   return {
     apikey: state.config.key,
@@ -192,6 +192,7 @@ function readSession() {
       batch_name: cleanLine(parsed.batch_name, 80),
       teacher_id: cleanLine(parsed.teacher_id, 64),
       teacher_name: cleanLine(parsed.teacher_name, 120),
+      access_status: cleanLine(parsed.access_status, 20) || 'active',
     }
     if (!session.student_id || !session.device_token || !session.batch_name || !session.teacher_id) return null
     return session
@@ -219,12 +220,16 @@ function adoptSession(session) {
   state.batch = session.batch_name
   state.teacherId = session.teacher_id
   state.teacherName = session.teacher_name || 'Your teacher'
+  state.accessStatus = session.access_status || 'active'
   renderTopbar()
 }
 
 function renderTopbar() {
   els.studentGreeting.textContent = state.studentName ? `Hi, ${state.studentName}` : 'Student Hub'
-  els.batchPill.textContent = state.batch ? `Batch: ${state.batch}` : 'No batch yet'
+  // Read-only and server-checked: there is nothing here to switch or browse.
+  els.batchPill.textContent = state.batch
+    ? `Enrolled Batch: ${state.batch}${state.verified ? ' · Verified' : ''}`
+    : 'No batch yet'
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -266,6 +271,7 @@ async function redeemToken(token) {
       batch_name: cleanLine(payload.batch_name, 80),
       teacher_id: cleanLine(payload.teacher_id, 64),
       teacher_name: cleanLine(payload.teacher_name, 120),
+      access_status: cleanLine(payload.access_status, 20) || 'active',
     }
     writeSession(session)
     return session
@@ -294,10 +300,47 @@ async function verifySession(deviceToken) {
       batch_name: cleanLine(payload.batch_name, 80),
       teacher_id: cleanLine(payload.teacher_id, 64),
       teacher_name: cleanLine(payload.teacher_name, 120),
+      access_status: cleanLine(payload.access_status, 20) || 'active',
     }
   } catch {
     showLocked('We could not reach the classroom just now. Check your connection and try again.')
     return null
+  }
+}
+
+/** Anything the server refuses ends up here, in words a student can act on. */
+function refuseAccess(message) {
+  const text = cleanLine(message, 160)
+  if (/paused/i.test(text)) {
+    showLocked('Batch access paused. Please contact your teacher.')
+    return
+  }
+  if (/denied|another batch/i.test(text)) {
+    showToast('Access Denied · This note belongs to another batch.')
+    return
+  }
+  // Unknown device: the token is dead, so the session must go with it.
+  clearSession()
+  showLocked('This device is no longer linked. Ask your teacher for a new magic link.')
+}
+
+/** A shared ?note=<id> link is checked against the verified batch, not trusted. */
+async function checkDeepLink() {
+  if (!state.deepLinkNote || !state.session) return
+  try {
+    const { data, error } = await client.rpc('get_single_student_note', {
+      p_device_token: state.session.device_token,
+      p_note_id: state.deepLinkNote,
+    })
+    if (error) throw error
+    const payload = data && typeof data === 'object' ? data : {}
+    if (payload.error) {
+      refuseAccess(payload.error)
+      return
+    }
+    scrollToDeepLink()
+  } catch {
+    showToast('Could not check that note link. Please try again.')
   }
 }
 
@@ -306,9 +349,7 @@ async function enterHub() {
   hideLocked()
   state.loadedOnce = false
   await loadAll()
-  if (state.deepLinkNote && !state.notes.some((note) => cleanLine(note.id, 64) === state.deepLinkNote)) {
-    showToast('That note is not available for your batch and teacher.')
-  }
+  await checkDeepLink()
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -726,80 +767,47 @@ function renderFatal(message) {
   els.notesList.replaceChildren(elem('div', 'glass empty-card', message))
 }
 
-/** Fallback for projects that have not applied the snapshot RPC yet: still BOTH filters, SELECT only. */
-async function readDirect() {
-  const fields = 'id,teacher_id,teacher_name,batch_name,title,subject,kind,body,file_path,file_name,mime_type,file_size,folder_id,folder_name,created_at'
-  const legacyFields = 'id,teacher_id,teacher_name,batch_name,title,subject,kind,body,file_path,file_name,mime_type,file_size,folder_id,created_at'
-  const [live, folders, notes] = await Promise.all([
-    scoped(client.from('live_meetings'))
-      .select('id,teacher_id,teacher_name,batch_name,meeting_title,topic,meeting_url,meeting_link,status,scheduled_start,duration_minutes,expires_at,created_at,updated_at')
-      .eq('batch_name', state.batch)
-      .eq('teacher_id', state.teacherId)
-      .order('scheduled_start', { ascending: true })
-      .limit(20),
-    scoped(client.from('folders'))
-      .select('id,batch_name,name,created_at')
-      .eq('batch_name', state.batch)
-      .eq('teacher_id', state.teacherId)
-      .limit(200),
-    scoped(client.from('notes'))
-      .select(fields)
-      .eq('batch_name', state.batch)
-      .eq('teacher_id', state.teacherId)
-      .order('created_at', { ascending: false })
-      .limit(200),
-  ])
-  let noteRows = notes
-  if (noteRows.error) {
-    noteRows = await scoped(client.from('student_notes'))
-      .select(legacyFields)
-      .eq('batch_name', state.batch)
-      .eq('teacher_id', state.teacherId)
-      .order('created_at', { ascending: false })
-      .limit(200)
-  }
-  const failure = live.error || folders.error || noteRows.error
-  if (failure) throw failure
-  return {
-    meetings: Array.isArray(live.data) ? live.data : [],
-    folders: Array.isArray(folders.data) ? folders.data : [],
-    notes: Array.isArray(noteRows.data) ? noteRows.data : [],
-  }
-}
-
+/**
+ * The only data path: one RPC, one token. The batch is decided by the database from that token, so
+ * there is no client-side batch to trust, edit, or get wrong.
+ */
 async function loadAll() {
-  if (!client || state.loading || !state.batch || !state.teacherId) return
+  if (!client || state.loading || !state.session) return
   state.loading = true
   setSyncLabel('Checking for updates…')
   try {
-    let payload = null
-    // Preferred path: SECURITY DEFINER, read-only RPC whose WHERE clause pins BOTH columns.
-    try {
-      const result = await scoped(client.rpc('student_hub_snapshot', {
-        p_batch_name: state.batch,
-        p_teacher_id: state.teacherId,
-      }))
-      if (!result.error && result.data && typeof result.data === 'object') payload = result.data
-    } catch { /* older project: use the direct filtered SELECTs below */ }
-    if (!payload) payload = await readDirect()
+    const { data, error } = await client.rpc('get_student_batch_data', {
+      p_device_token: state.session.device_token,
+    })
+    if (error) throw error
+    const payload = data && typeof data === 'object' ? data : {}
+    if (payload.error) {
+      refuseAccess(payload.error)
+      return
+    }
 
-    const meetingRows = Array.isArray(payload.meetings)
-      ? payload.meetings
-      : payload.meeting && typeof payload.meeting === 'object'
-        ? [payload.meeting]
-        : []
-    // Defence in depth: only rows for this exact batch + teacher are rendered.
-    state.meetings = meetingRows.filter((row) =>
+    // Server-verified scope. Nothing below reads a batch name from the device.
+    state.batch = cleanLine(payload.batch_name, 80)
+    state.teacherId = cleanLine(payload.teacher_id, 64)
+    state.teacherName = cleanLine(payload.teacher_name, 120) || 'Your teacher'
+    state.studentName = cleanLine(payload.full_name, 120) || state.studentName
+    state.accessStatus = cleanLine(payload.access_status, 20) || 'active'
+    state.verified = Boolean(state.batch && state.teacherId)
+    renderTopbar()
+
+    const rows = Array.isArray(payload.meetings) ? payload.meetings : []
+    // Defence in depth: even a server bug cannot put a foreign row on screen.
+    state.meetings = rows.filter((row) =>
       row && typeof row === 'object'
-      && cleanLine(row.batch_name, 80) === state.batch
+      && cleanLine(row.batch_name, 80).toLowerCase() === state.batch.toLowerCase()
       && cleanLine(row.teacher_id, 64) === state.teacherId
       && meetingState(row) !== 'ended',
     )
     state.meeting = state.meetings.find((row) => meetingState(row) === 'live') ?? null
     state.folders = Array.isArray(payload.folders) ? payload.folders : []
-    // Defence in depth: never render a row that is not for this exact batch + teacher.
     state.notes = (Array.isArray(payload.notes) ? payload.notes : []).filter((note) =>
-      cleanLine(note.batch_name, 80) === state.batch && cleanLine(note.teacher_id, 64) === state.teacherId,
+      cleanLine(note.batch_name, 80).toLowerCase() === state.batch.toLowerCase()
+      && cleanLine(note.teacher_id, 64) === state.teacherId,
     )
     state.error = ''
     state.loadedOnce = true
@@ -893,6 +901,10 @@ async function start() {
   }
 
   adoptSession(session)
+  if (session.access_status !== 'active' && session.access_status !== 'paid') {
+    showLocked('Batch access paused. Please contact your teacher.')
+    return
+  }
   subscribe()
   await enterHub()
 

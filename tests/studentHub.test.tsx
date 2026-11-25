@@ -602,9 +602,10 @@ describe('Student Portal and RLS (SP)', () => {
     const portal = read('student-hub/portal.js')
     expect(portal).toContain("const CONFIG_URL = './config.json'")
     expect(portal).toContain('fetch(CONFIG_URL')
-    expect(portal).toContain(".from('live_meetings')")
-    expect(portal).toContain(".from('student_notes')")
-    expect(portal).toContain(".from('notes')")
+    // Not "scoped reads" any more: no table reads at all. anon has no SELECT to use them with.
+    expect(portal).not.toContain('.from(')
+    expect(portal).toContain("client.rpc('get_student_batch_data'")
+    expect(portal).toContain("client.rpc('get_single_student_note'")
     expect(portal).toContain('No scheduled classes right now')
     expect(portal).toContain('Join Now')
     expect(portal).toContain('postgres_changes')
@@ -768,17 +769,22 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain("client.rpc('redeem_magic_link'")
     expect(portal).toContain("client.rpc('verify_student_session'")
     expect(portal).toContain("client.rpc('log_student_activity'")
-    expect(portal).toContain("client.rpc('student_hub_snapshot'")
+    expect(portal).toContain("client.rpc('get_student_batch_data'")
     // The token never survives in the address bar.
     expect(portal).toContain("url.searchParams.delete('token')")
     expect(portal).toContain('window.history.replaceState')
     expect(portal).toContain('const LOCKED_USED')
     expect(portal).toContain('The magic link has already been used or expired'.replace('The ', 'This '))
-    // Content is still read with BOTH scope headers, and still read-only.
-    expect(portal).toContain(".eq('batch_name', state.batch)")
-    expect(portal).toContain(".eq('teacher_id', state.teacherId)")
-    expect(portal).toContain("setHeader('X-Student-Hub-Batch'")
-    expect(portal).toContain("setHeader('X-Student-Hub-Teacher-Id'")
+    // Content comes from one token-scoped RPC. The client never names a batch to the server.
+    expect(portal).not.toContain('.from(')
+    expect(portal).toContain('p_device_token: state.session.device_token')
+    expect(portal).not.toMatch(/params\.get\('batch'\)/)
+    // The header badge is read-only and says where the batch came from.
+    expect(portal).toContain('Enrolled Batch: ${state.batch}')
+    expect(portal).toContain('· Verified')
+    // Storage headers carry the server's answer, not localStorage.
+    expect(portal).toContain("'X-Student-Hub-Batch': state.batch")
+    expect(portal).toContain("'X-Student-Hub-Teacher-Id': state.teacherId")
     expect(portal).toContain('function scopeHeaders()')
     expect(portal).toContain('/storage/v1/object/${STORAGE_BUCKET}/')
     expect(portal).toContain('Duration: ${formatDurationLabel(row.duration_minutes)}')
@@ -895,6 +901,9 @@ describe('Student Portal and RLS (SP)', () => {
     // A saved session is re-verified on every visit, and a revoked device is dropped.
     expect(portal).toContain('verifySession(saved.device_token)')
     expect(portal).toContain('This device is no longer linked. Ask your teacher for a new magic link.')
+    // A paused batch stops at the locked screen, before any content call.
+    expect(portal).toContain("if (session.access_status !== 'active' && session.access_status !== 'paid')")
+    expect(portal).toContain('Batch access paused. Please contact your teacher.')
     // Only a verified session reaches the hub or the data loaders.
     expect(portal).toMatch(/async function enterHub\(\)[\s\S]{0,400}loadAll\(\)/)
     expect(portal.indexOf('adoptSession(session)')).toBeLessThan(portal.indexOf('await enterHub()'))
@@ -954,6 +963,76 @@ describe('Student Portal and RLS (SP)', () => {
     expect(sql).toContain('grant execute on function public.generate_magic_link(uuid) to authenticated;')
     expect(sql).not.toContain('grant execute on function public.generate_magic_link(uuid) to anon')
     expect(sql).not.toContain('grant select on public.magic_links to anon')
+  })
+
+  it('SP-08 a device token cannot reach another batch, and a pause closes the door', async () => {
+    // Two batches of real content for the same teacher.
+    const neetNote = seedFakeStudentNote('t1', { title: 'NEET cell division', batch_name: 'NEET Biology' })
+    const jeeNote = seedFakeStudentNote('t1', { title: 'JEE integration drill', batch_name: 'JEE Maths' })
+    const jeeMeeting = seedFakeMeeting('t1', { batch_name: 'JEE Maths', meeting_title: 'JEE doubt class', is_live: true })
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    await openHub()
+    const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
+    fireEvent.click(await within(neet).findByRole('button', { name: 'Generate magic link for Aarav Sharma' }))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(1))
+    // The single click already copied the link — no second step for the teacher.
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const token = fakeMagicLinksFor('t1')[0].token
+    expect(writeText.mock.calls[0][0]).toContain(`/student-hub/?token=${token}`)
+
+    const redeemed = await sb().rpc('redeem_magic_link', { p_token: token })
+    const device = (redeemed.data as { device_token: string }).device_token
+
+    // The batch is decided by the server, so the payload simply cannot hold JEE rows.
+    const data = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    const payload = data.data as {
+      batch_name: string
+      access_status: string
+      notes: { batch_name: string }[]
+      meetings: { batch_name: string }[]
+    }
+    expect(payload.batch_name).toBe('NEET Biology')
+    expect(payload.access_status).toBe('active')
+    expect(payload.notes.every((note) => note.batch_name === 'NEET Biology')).toBe(true)
+    expect(payload.meetings).toHaveLength(0)
+    expect(payload.notes.map((note) => (note as { title: string }).title)).toContain('NEET cell division')
+
+    // A shared ?note= link from the other batch is refused by name, not silently ignored.
+    const foreign = await sb().rpc('get_single_student_note', { p_device_token: device, p_note_id: jeeNote.id })
+    expect((foreign.data as { error?: string }).error).toBe('Access Denied · This note belongs to another batch.')
+    const own = await sb().rpc('get_single_student_note', { p_device_token: device, p_note_id: neetNote.id })
+    expect((own.data as { note?: { title: string } }).note?.title).toBe('NEET cell division')
+    // A made-up note id is refused the same way.
+    const bogus = await sb().rpc('get_single_student_note', {
+      p_device_token: device, p_note_id: '00000000-0000-0000-0000-000000000000',
+    })
+    expect((bogus.data as { error?: string }).error).toContain('another batch')
+
+    // The meeting belongs to JEE, so it must never appear for this student.
+    expect(jeeMeeting.batch_name).toBe('JEE Maths')
+
+    // Pause: the server refuses, and the phone that was linked is unlinked with it.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Pause batch access' }))
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.access_status).toBe('suspended'))
+    const paused = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    expect((paused.data as { error?: string }).error).toBe('Batch access paused. Please contact your teacher.')
+    // The token survives the pause: the student must see the reason, not a dead link.
+    expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.device_token).toBe(device)
+    const afterPause = await sb().rpc('verify_student_session', { p_device_token: device })
+    expect((afterPause.data as { access_status: string }).access_status).toBe('suspended')
+    const noteWhilePaused = await sb().rpc('get_single_student_note', { p_device_token: device, p_note_id: neetNote.id })
+    expect((noteWhilePaused.data as { error?: string }).error).toContain('paused')
+
+    // Resume, and the badge on the row stops saying Paused.
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Resume batch access' }))
+    await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.access_status).toBe('active'))
+    const resumed = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    expect((resumed.data as { batch_name: string }).batch_name).toBe('NEET Biology')
   })
 
   it('SP-05 keeps the locked card on one left edge with its own padding', () => {
