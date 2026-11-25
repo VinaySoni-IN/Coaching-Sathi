@@ -30,3 +30,9 @@ uploads
 
 # local design previews
 icons-preview*.png
+
+# Snapshot archives: large and regenerable (one command, see backups/README.md).
+# The docs beside them stay tracked.
+/backups/*.bundle
+/backups/*-tree.tar.gz
+/backups/*-HEAD.txt
