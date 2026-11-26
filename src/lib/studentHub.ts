@@ -302,10 +302,15 @@ export function fromLocalInputValue(value: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
+/** Clipboard, with the old selection trick as a fallback: a refused write must not look like a dead button. */
 export async function copyToClipboard(value: string): Promise<void> {
   if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-    await navigator.clipboard.writeText(value)
-    return
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      // Permission, focus or a stale tap: fall through to execCommand before giving up.
+    }
   }
   const area = document.createElement('textarea')
   area.value = value

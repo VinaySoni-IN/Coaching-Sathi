@@ -236,6 +236,13 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
   const [activityFor, setActivityFor] = useState<{ id: string; name: string } | null>(null)
   const [activity, setActivity] = useState<HubActivity[] | null>(null)
   const [activityError, setActivityError] = useState<string | null>(null)
+  /* The drawer keeps its own copy state: its buttons sit above the page banner, so a message the page
+     shows behind the sheet is a message the teacher never sees. */
+  const [drawerLink, setDrawerLink] = useState<{ forId: string; token: string } | null>(null)
+  const [drawerCheck, setDrawerCheck] = useState<'checking' | 'unused' | 'none' | 'failed'>('checking')
+  const [drawerNote, setDrawerNote] = useState<{ tone: 'ok' | 'error' | 'info'; text: string } | null>(null)
+  const [drawerBusy, setDrawerBusy] = useState(false)
+  const [manualUrl, setManualUrl] = useState<string | null>(null)
   const rosterReady = rosterFor === effectiveBatch
 
   useEffect(() => {
@@ -323,15 +330,98 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
     void (async () => {
       const token = await fetchStudentLink(row.student_id)
       if (!token) {
-        setError(`There is no unused link for ${student.name}. Generate one — it is one tap.`)
+        // Nothing left to hand over (they opened it already): mint one instead of leaving the tap dead.
+        setBusyStudent(null)
+        copyLinkFor(student)
         return
       }
       await copyToClipboard(magicLinkUrl(token))
       setStatus(`Link for ${student.name} copied again. The same link still works until they open it.`)
       setError(null)
     })().catch((cause: unknown) => {
-      setError(cloudMessage(cause, 'Could not copy that link. Check your connection and try again.'))
+      setError(cloudMessage(cause, 'Could not copy that link. Open the student\'s activity sheet and copy it from there.'))
     }).finally(() => setBusyStudent(null))
+  }
+
+  /**
+   * Look the link up while the drawer opens, so the copy happens inside the tap. Waiting on the
+   * network first is what makes a copy button silently do nothing: browsers only allow a clipboard
+   * write while the tap is still "live", and an awaited request spends that permission.
+   */
+  function resolveDrawerLink(studentId: string) {
+    return fetchStudentLink(studentId)
+      .then((token) => {
+        setDrawerLink(token ? { forId: studentId, token } : null)
+        setDrawerCheck(token ? 'unused' : 'none')
+      })
+      .catch(() => {
+        setDrawerLink(null)
+        setDrawerCheck('failed')
+        setDrawerNote({ tone: 'error', text: 'Could not check this link. Tap Retry.' })
+      })
+  }
+
+  useEffect(() => {
+    if (!activityFor) return
+    void resolveDrawerLink(activityFor.id)
+  }, [activityFor])
+
+  /** Retry, from the button: the one place that may reset the check state synchronously. */
+  function loadDrawerLink(studentId: string) {
+    setDrawerCheck('checking')
+    setDrawerNote(null)
+    setManualUrl(null)
+    void resolveDrawerLink(studentId)
+  }
+
+  /** Copy straight away, and if the browser refuses, hand over the URL instead of failing quietly. */
+  const copyInDrawer = (url: string, done: string) => {
+    setManualUrl(null)
+    void copyToClipboard(url)
+      .then(() => setDrawerNote({ tone: 'ok', text: done }))
+      .catch(() => {
+        setManualUrl(url)
+        setDrawerNote({ tone: 'info', text: 'This browser blocks copying. Press and hold the link below to copy it.' })
+      })
+  }
+
+  /** Mint a fresh link, unlink the old phone first, then copy it — all with feedback inside the drawer. */
+  const mintDrawerLink = (student: { name: string }) => {
+    const row = rowFor(student.name)
+    if (!row) {
+      setDrawerNote({ tone: 'error', text: 'This student is still being published. Close and open them again in a moment.' })
+      return
+    }
+    setDrawerBusy(true)
+    setDrawerNote(null)
+    void (async () => {
+      // A new link replaces the old one, and an already-linked phone must die with it.
+      if (row.is_activated) await resetStudentDevice(row.student_id)
+      const token = await generateMagicLink(row.student_id)
+      setHubRows((prev) => ({ ...prev, [row.student_id]: { ...row, is_activated: false, has_active_link: true } }))
+      setDrawerLink({ forId: row.student_id, token })
+      setDrawerCheck('unused')
+      copyInDrawer(magicLinkUrl(token), row.is_activated
+        ? 'New link copied. Their old phone is unlinked until they open this one.'
+        : 'New link copied. The link you sent before no longer works.')
+    })().catch((cause: unknown) => {
+      setDrawerNote({ tone: 'error', text: cloudMessage(cause, 'Could not create that link. Check your connection and try again.') })
+    }).finally(() => setDrawerBusy(false))
+  }
+
+  /** Primary drawer action: reuse the unused link, and mint one only when there is nothing to reuse. */
+  const copyOrCreateLink = (student: { name: string }) => {
+    if (!activityFor) return
+    if (drawerCheck === 'checking') return
+    if (drawerCheck === 'failed') {
+      loadDrawerLink(activityFor.id)
+      return
+    }
+    if (drawerLink && drawerLink.forId === activityFor.id) {
+      copyInDrawer(magicLinkUrl(drawerLink.token), 'Copied. This is the same link they were sent — it keeps working until they open it.')
+      return
+    }
+    mintDrawerLink(student)
   }
 
   const openActivity = (student: { name: string }) => {
@@ -340,6 +430,12 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       setError(`${student.name} is still being published. Tap again in a moment.`)
       return
     }
+    // Opening the sheet starts from a clean slate; the link check then runs once, in the effect.
+    setDrawerLink(null)
+    setDrawerCheck('checking')
+    setDrawerNote(null)
+    setManualUrl(null)
+    setDrawerBusy(false)
     setActivityFor({ id: row.student_id, name: student.name })
     setActivity(null)
     setActivityError(null)
@@ -1384,31 +1480,81 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
 
             {/* Two actions, both about the link: hand it over again, or close the batch. */}
             <div className="mt-4 grid shrink-0 gap-2 border-t border-white/8 pt-3">
+              {(() => {
+                const student = batchStudents.find((entry) => entry.name === activityFor.name)
+                const row = rowFor(activityFor.name)
+                const reusing = drawerCheck === 'unused' && Boolean(drawerLink && drawerLink.forId === activityFor.id)
+                const label = drawerBusy
+                  ? 'Working…'
+                  : drawerCheck === 'checking' ? 'Checking link…'
+                    : drawerCheck === 'failed' ? 'Retry link'
+                      : reusing ? 'Copy link again' : 'Send a new link'
+                return (
+                  <>
+                    <button
+                      type="button"
+                      disabled={drawerBusy || drawerCheck === 'checking'}
+                      onClick={() => { if (student) copyOrCreateLink(student) }}
+                      className="lens glass-btn flex h-11 w-full items-center justify-center gap-1.5 rounded-full text-[12.5px] font-semibold text-white disabled:opacity-60"
+                    >
+                      {drawerBusy || drawerCheck === 'checking' ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />} {label}
+                    </button>
+                    {reusing && (
+                      <button
+                        type="button"
+                        disabled={drawerBusy}
+                        onClick={() => { if (student) mintDrawerLink(student) }}
+                        className="justify-self-start px-1 text-[11px] font-semibold text-white/40 underline underline-offset-2 hover:text-white/75 disabled:opacity-50"
+                      >
+                        Replace with a brand-new link
+                      </button>
+                    )}
+                    <p className="px-1 text-[10.5px] leading-snug text-white/30">
+                      {reusing
+                        ? 'The link they already have. Copying it does not cancel it.'
+                        : drawerCheck === 'checking'
+                          ? 'Finding the link they were sent.'
+                          : row?.is_activated
+                          ? 'They have already opened their link, so this replaces it and unlinks their phone until they open the new one.'
+                          : 'No working link right now — one tap creates and copies it.'}
+                    </p>
+                  </>
+                )
+              })()}
+
+              {manualUrl && (
+                <input
+                  readOnly
+                  value={manualUrl}
+                  aria-label="Link to copy"
+                  onFocus={(event) => event.currentTarget.select()}
+                  onClick={(event) => event.currentTarget.select()}
+                  className="h-10 w-full rounded-xl border border-white/12 bg-black/40 px-3 text-[11px] text-white/70"
+                />
+              )}
+
+              {drawerNote && (
+                <p
+                  role="status"
+                  className={`rounded-xl px-3 py-2 text-[11.5px] leading-snug ${drawerNote.tone === 'ok'
+                    ? 'bg-present/12 text-present ring-1 ring-present/20'
+                    : drawerNote.tone === 'error'
+                      ? 'bg-absent/12 text-red-100 ring-1 ring-absent/25'
+                      : 'bg-white/6 text-white/60 ring-1 ring-white/10'}`}
+                >
+                  {drawerNote.text}
+                </p>
+              )}
+
               <button
                 type="button"
-                onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) copyExistingLink(student) }}
-                className="lens glass-btn flex h-11 w-full items-center justify-center gap-1.5 rounded-full text-[12.5px] font-semibold text-white"
+                onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) toggleAccess(student) }}
+                className={`flex h-11 items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold ${isAccessPaused(rowFor(activityFor.name)?.access_status)
+                  ? 'bg-present/12 text-present ring-1 ring-present/25'
+                  : 'bg-white/8 text-white/60 hover:text-white'}`}
               >
-                <Copy size={14} /> Copy link again
+                {isAccessPaused(rowFor(activityFor.name)?.access_status) ? 'Resume access' : 'Pause access'}
               </button>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) copyLinkFor(student) }}
-                  className="flex h-11 items-center justify-center gap-1.5 rounded-full bg-white/8 text-[12px] font-semibold text-white/70 hover:text-white"
-                >
-                  <Link2 size={13} /> New link
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) toggleAccess(student) }}
-                  className={`flex h-11 items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold ${isAccessPaused(rowFor(activityFor.name)?.access_status)
-                    ? 'bg-present/12 text-present ring-1 ring-present/25'
-                    : 'bg-white/8 text-white/60 hover:text-white'}`}
-                >
-                  {isAccessPaused(rowFor(activityFor.name)?.access_status) ? 'Resume access' : 'Pause access'}
-                </button>
-              </div>
               <p className="text-[10.5px] leading-snug text-white/25">
                 Pausing closes their batch immediately; resuming reopens it without a new link.
               </p>

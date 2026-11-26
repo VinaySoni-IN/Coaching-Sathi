@@ -633,7 +633,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v22')
+    expect(read('public/sw.js')).toContain('coachsathi-v23')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
@@ -680,7 +680,7 @@ describe('Student Portal and RLS (SP)', () => {
     // A deliberately new link kills the first before the second exists — that is what single use means.
     fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
     const linkDrawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
-    fireEvent.click(await within(linkDrawer).findByRole('button', { name: 'New link' }))
+    fireEvent.click(await within(linkDrawer).findByRole('button', { name: 'Replace with a brand-new link' }))
     await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(2))
     fireEvent.click(within(linkDrawer).getByRole('button', { name: 'Close activity' }))
     const [stale, fresh] = fakeMagicLinksFor('t1')
@@ -1074,6 +1074,45 @@ describe('Student Portal and RLS (SP)', () => {
     expect((resumed.data as { batch_name: string }).batch_name).toBe('NEET Biology')
   })
 
+  it('SP-10 the drawer copies the unused link without burning it, and never fails silently', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    await openHub()
+    const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
+    fireEvent.click(await within(neet).findByRole('button', { name: 'Generate magic link for Aarav Sharma' }))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(1))
+    const link = fakeMagicLinksFor('t1')[0]
+    const writesBefore = writeText.mock.calls.length
+
+    // The link is looked up while the drawer opens, so the tap itself only copies.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
+    const copy = await within(drawer).findByRole('button', { name: 'Copy link again' })
+    expect(within(drawer).getByRole('button', { name: 'Replace with a brand-new link' })).toBeTruthy()
+
+    fireEvent.click(copy)
+    await waitFor(() => expect(writeText.mock.calls.length).toBe(writesBefore + 1))
+    expect(writeText.mock.calls.at(-1)?.[0]).toContain(`?token=${link.token}`)
+    // The confirmation is inside the sheet — the page banner sits behind it, where nobody looks.
+    const said = await within(drawer).findByRole('status')
+    expect(said.textContent).toMatch(/Copied\. This is the same link they were sent/)
+    // Copying is not reissuing: the same unused token is still the one on the server.
+    expect(fakeMagicLinksFor('t1')).toHaveLength(1)
+    expect(fakeMagicLinksFor('t1')[0].is_used).toBe(false)
+    expect(fakeMagicLinksFor('t1')[0].token).toBe(link.token)
+
+    // A browser that refuses the clipboard gets a selectable link instead of a dead button.
+    writeText.mockRejectedValueOnce(new Error('NotAllowedError'))
+    const execCommand = vi.fn().mockReturnValue(false)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Copy link again' }))
+    const manual = await within(drawer).findByLabelText('Link to copy') as HTMLInputElement
+    expect(manual.value).toContain(`?token=${link.token}`)
+    expect(within(drawer).getByRole('status').textContent).toMatch(/Press and hold the link below/)
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Close activity' }))
+  })
+
   it('SP-09 removing a student revokes the link, and the drawer floats above the nav', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
@@ -1092,9 +1131,10 @@ describe('Student Portal and RLS (SP)', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
     expect(drawer.parentElement?.parentElement).toBe(document.body)
     expect(drawer.className).toContain('max-h-[min(78vh,620px)]')
-    // Both link actions live in the drawer, including the copy-again one.
-    expect(within(drawer).getByRole('button', { name: 'Copy link again' })).toBeTruthy()
-    expect(within(drawer).getByRole('button', { name: 'New link' })).toBeTruthy()
+    // This student already opened their link, so the primary action offers a fresh one instead of a dead copy.
+    expect(await within(drawer).findByRole('button', { name: 'Send a new link' })).toBeTruthy()
+    // The sheet always says what the tap will do: reuse nothing, and be explicit about a fresh link.
+    expect(within(drawer).getByText(/(replaces it and unlinks their phone|one tap creates and copies it)/)).toBeTruthy()
     expect(within(drawer).getByRole('button', { name: 'Pause access' })).toBeTruthy()
     fireEvent.click(within(drawer).getByRole('button', { name: 'Close activity' }))
 
