@@ -74,6 +74,21 @@ export function magicLinkUrl(token: string): string {
 
 export const STUDENT_NOTES_BUCKET = 'student_notes'
 export const MAX_NOTE_FILE_SIZE = 15 * 1024 * 1024
+
+/** Types the notes bucket refuses. A page or script would run on the app's own origin once opened. */
+const UNSAFE_NOTE_TYPES = [
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+  'application/xml',
+  'text/xml',
+  'application/javascript',
+  'text/javascript',
+]
+
+export function isAllowedNoteMime(type: string): boolean {
+  return !UNSAFE_NOTE_TYPES.includes(cleanLine(type, 120).split(';')[0].trim().toLowerCase())
+}
 export const DEFAULT_BATCH_NAME = 'General'
 export const DEFAULT_DURATION_MINUTES = 60
 export const MIN_DURATION_MINUTES = 1
@@ -536,6 +551,9 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
     const file = input.file
     if (!file) throw new Error('Choose a file or PDF to upload.')
     if (file.size > MAX_NOTE_FILE_SIZE) throw new Error('Files must be 15 MB or smaller.')
+    if (!isAllowedNoteMime(file.type)) {
+      throw new Error('That file type is not allowed. Upload a PDF, document, image or text file.')
+    }
     fileName = safeFileName(file.name)
     mimeType = cleanLine(file.type || 'application/octet-stream', 160)
     fileSize = file.size

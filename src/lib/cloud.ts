@@ -74,5 +74,7 @@ export function cloudMessage(e: unknown, fallback = 'Could not reach the server.
   if (m.includes('jwt expired') || m.includes('invalid jwt') || m.includes('not authenticated') || m.includes('session has ended')) return 'Your session has ended. Sign in again to use cloud backup.'
   if (m.includes('row-level security') || m.includes('permission denied') || m.includes('new row violates')) return 'This backup belongs to a different account or cannot be changed. Sign in again.'
   if (m.includes('not configured')) return CLOUD_MISSING
+  // Postgres/PostgREST wording names tables, columns and functions. A teacher never needs that.
+  if (/relation "|column "|constraint "|function public\.|syntax error|does not exist|violates .*constraint/.test(m)) return fallback
   return raw.length > 160 ? fallback : raw
 }

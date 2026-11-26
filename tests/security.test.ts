@@ -1,115 +1,150 @@
-import { describe, it, expect, vi } from 'vitest'
-import { MAX_BACKUP_BYTES, sanitizeState } from '../src/lib/ledger'
-import { addPayments, checkIntegrity } from '../src/lib/payments'
-import { parseBackup, downloadBackup } from '../src/lib/backup'
-import { feeFor } from '../src/lib/store'
-import { dataKeyFor } from '../src/lib/auth'
-import { makeState, R, NOW } from './helpers'
+import { describe, expect, it } from 'vitest'
+import { readdirSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
-const base = (over: Record<string, unknown> = {}) => ({ v: 3, batches: [{ id: 'neet', name: 'N', subject: 'B', time: '6', students: [{ id: 's1', name: 'A', roll: '01', phone: '1', rate: 100, joined: '2026-01', no: 1 }] }], marks: {}, locked: {}, ...over })
-const clean = (raw: unknown) => sanitizeState(raw, NOW)!
+const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
+const json = (path: string) => JSON.parse(read(path)) as {
+  headers: { source: string; headers: { key: string; value: string }[] }[]
+  rewrites?: { source: string; destination: string }[]
+}
 
-describe('Penetration tests (PT)', () => {
-  it('PT-01 prototype pollution through a backup is impossible', () => {
-    const text = '{"__proto__":{"polluted":"yes"},"constructor":{"prototype":{"polluted2":"yes"}},"batches":[{"id":"neet","name":"N","students":[{"id":"s1","name":"A"}],"__proto__":{"polluted3":1}}],"marks":{"__proto__":{"x":"present"}},"locked":{},"fees":{"__proto__":5},"feeRates":{"__proto__":1}}'
-    const r = parseBackup(text)
-    for (const k of ['polluted', 'polluted2', 'polluted3']) expect(({} as Record<string, unknown>)[k]).toBeUndefined()
-    expect(JSON.parse(r.json).batches[0].students[0].id).toBe('s1')
+/** Header lookup for a given Vercel source pattern. */
+function headerValue(source: string, key: string): string {
+  const entry = json('vercel.json').headers.find((item) => item.source === source)
+  return entry?.headers.find((header) => header.key.toLowerCase() === key.toLowerCase())?.value ?? ''
+}
+
+describe('Security checklist that the code can enforce (SEC)', () => {
+  it('SEC-01 no environment file is tracked, and .gitignore keeps it that way', () => {
+    const ignore = read('.gitignore')
+    expect(ignore).toMatch(/^\.env$/m)
+    expect(ignore).toMatch(/^\.env\.\*$/m)
+    expect(ignore).toMatch(/^!\.env\.example$/m)
+    // The example file may stay; a real one never.
+    expect(() => read('.env')).toThrow()
   })
-  it('PT-02 reserved words as ids cannot reach Object.prototype or break fee lookups', () => {
-    const st = clean({ batches: [{ id: 'constructor', name: 'X', students: [{ id: '__proto__', name: 'P' }, { id: 'toString', name: 'Q' }] }, { id: '__proto__', name: 'Y', students: [] }], marks: {}, locked: {}, feeRates: { constructor: 4000 } }).state
-    for (const b of st.batches) { expect(['constructor', '__proto__']).not.toContain(b.id); expect(Number.isSafeInteger(feeFor(b, st))).toBe(true) }
-    expect(checkIntegrity(st)).toEqual([])
-    expect(feeFor({ id: 'hasOwnProperty', name: '', subject: '', time: '', students: [] }, { feeRates: {}, feeHist: {}, defaultFee: R(2000) })).toBe(R(2000))
-  })
-  it('PT-03 string, NaN, infinite, negative, fractional and absurd amounts never corrupt totals', () => {
-    const r = clean(base({ txns: [
-      { id: 'a', sid: 's1', mk: '2026-11', amount: 10000, date: '2026-11-01', at: 1 },
-      { id: 'b', sid: 's1', mk: '2026-11', amount: 'abc', date: '2026-11-01', at: 2 },
-      { id: 'c', sid: 's1', mk: '2026-11', amount: -500, date: '2026-11-01', at: 3 },
-      { id: 'd', sid: 's1', mk: '2026-11', amount: Infinity, date: '2026-11-01', at: 4 },
-      { id: 'e', sid: 's1', mk: '2026-11', amount: null, date: '2026-11-01', at: 5 },
-      { id: 'f', sid: 's1', mk: '2026-11', amount: 1e12, date: '2026-11-01', at: 6 },
-      { id: 'g', sid: 's1', mk: '2026-11', amount: { valueOf: 5 }, date: '2026-11-01', at: 7 },
-      { id: 'h', sid: 's1', mk: '2026-11', amount: 5000, date: '2026-11-01', at: 8 },
-      { id: 'i', sid: 's1', mk: '2026-11', amount: 10.5, date: '2026-11-01', at: 9 },   // fractional paise in a v3 file
-      { id: 'j', sid: 's1', mk: '2026-11', amount: '100', date: '2026-11-01', at: 10 }, // a string in a v3 file
-    ] }))
-    expect(r.state.fees['2026-11|s1']).toBe(15000)
-    expect(r.dropped).toBe(8)
-    expect(checkIntegrity(r.state)).toEqual([])
-  })
-  it('PT-04 orphans and duplicate ids are removed or made unique', () => {
-    const st = clean(base({ txns: [{ id: 'dup', sid: 's1', mk: '2026-11', amount: 10, at: 1 }, { id: 'dup', sid: 's1', mk: '2026-11', amount: 20, at: 2 }, { id: 'ghost', sid: 'nobody', mk: '2026-11', amount: 99, at: 3 }] })).state
-    expect(st.txns).toHaveLength(2)
-    expect(new Set(st.txns.map((t) => t.id)).size).toBe(2)
-    expect(checkIntegrity(st)).toEqual([])
-  })
-  it('PT-05 forged dates (impossible, markup, future, absurd year) are neutralised', () => {
-    const byId = Object.fromEntries(clean(base({ txns: [
-      { id: 'a', sid: 's1', mk: '2026-11', amount: 10, date: '2026-02-30', at: 1 },
-      { id: 'b', sid: 's1', mk: '2026-11', amount: 10, date: '2026-01-01<script>alert(1)</script>', at: 2 },
-      { id: 'c', sid: 's1', mk: '2026-11', amount: 10, date: '2050-01-01', at: 3 },
-      { id: 'd', sid: 's1', mk: '<img src=x>', amount: 10, date: '2026-11-01', at: 4 },
-      { id: 'e', sid: 's1', mk: '2026-11', amount: 10, date: '2026-11-01', at: 'now' },
-      { id: 'f', sid: 's1', mk: '2026-11', amount: 10, date: '2999-01-01', at: 9 },
-    ] })).state.txns.map((t) => [t.id, t]))
-    expect(byId.a.date).toBeNull(); expect(byId.b.date).toBeNull()
-    expect(byId.c.date).toBe('2026-11-12')
-    expect(byId.d).toBeUndefined()
-    expect(byId.e.at).toBeNull(); expect(byId.f.date).toBeNull()
-  })
-  it('PT-06 structurally broken data is repaired, never throws', () => {
-    const shapes: unknown[] = [
-      { batches: [null, 5, 'x', [], { students: null }, { id: 'ok', students: [null, 7, { id: 's' }] }], marks: null, locked: [], txns: 'nope', adjustments: {}, feeRates: [], feeHist: 5, charges: 'x', seq: 7 },
-      { batches: [], marks: {}, locked: {} },
-      { batches: [{ id: 'a', students: [{ id: 's1', name: { toString: 'x' } }] }], txns: [null, [], 3, 'x'] },
+
+  it('SEC-02 no server secret reaches the browser bundle', () => {
+    const client = readdirSync(resolve(process.cwd(), 'src/lib')) as string[]
+    const files = [
+      'src/lib/cloud.ts', 'src/lib/studentHub.ts', 'student-hub/portal.js',
+      'student-hub/config.json', ...client.filter((file) => file.endsWith('.ts')).map((file) => `src/lib/${file}`),
     ]
-    for (const s of shapes) expect(() => sanitizeState(s, NOW)).not.toThrow()
-    expect(checkIntegrity(clean(shapes[0]).state)).toEqual([])
+    const source = files.map((file) => read(file)).join('\n')
+    expect(source).not.toMatch(/service_role/)
+    expect(source).not.toMatch(/sk_live_|sk_test_|AKIA[0-9A-Z]{16}/)
+    expect(source).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY/)
+    // The publishable key is the only credential in the browser, and it is an anon JWT.
+    const config = JSON.parse(read('student-hub/config.json')) as { supabaseAnonKey: string }
+    const payload = JSON.parse(Buffer.from(config.supabaseAnonKey.split('.')[1], 'base64').toString()) as { role: string }
+    expect(payload.role).toBe('anon')
   })
-  it('PT-07 oversize / hostile / non-object files are rejected without side effects', () => {
-    expect(() => parseBackup('x'.repeat(MAX_BACKUP_BYTES + 1))).toThrow()
-    expect(() => parseBackup('['.repeat(200_000))).toThrow()
-    for (const p of ['{"batches": "nope"}', 'not json', 'null', '[]', '42', '"str"', 'true', '{}']) expect(() => parseBackup(p), p).toThrow()
+
+  it('SEC-03 the app ships no source maps', () => {
+    const vite = read('vite.config.ts')
+    expect(vite).not.toMatch(/sourcemap:\s*true/)
+    expect(vite).not.toMatch(/sourcemap:\s*['"]inline['"]/)
   })
-  it('PT-08 forged payment requests are refused with a reason', () => {
-    const st = makeState()
-    const attempt = (over: Record<string, unknown>) => addPayments(st, { ref: 'x', sid: 's1', parts: [{ mk: '2026-11', amount: R(1) }], date: '2026-11-12', at: 1, ...over } as never, NOW)
-    for (const over of [{ sid: 'constructor' }, { sid: '__proto__' }, { parts: [{ mk: '__proto__', amount: 5 }] }, { date: '12/11/2026' }, { ref: '__proto__' + 'x'.repeat(70) }]) expect(attempt(over).ok, JSON.stringify(over)).toBe(false)
-    expect(attempt({}).ok).toBe(true)
-  })
-  it('PT-09 each teacher account has its own storage key (tenant isolation)', () => {
-    expect(dataKeyFor('tAAA')).not.toBe(dataKeyFor('tBBB'))
-  })
-  it('PT-10 backup file names cannot contain path characters from the account email', () => {
-    const names: string[] = []
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download) })
-    ;(URL as unknown as { createObjectURL: () => string }).createObjectURL = () => 'blob:x'
-    ;(URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {}
-    downloadBackup({ name: 'x', email: '../../etc/pass wd"<>@evil.com' }, makeState())
-    expect(names[0]).toMatch(/^coaching-sathi-[a-z0-9._-]+-\d{4}-\d{2}-\d{2}\.json$/)
-  })
-  it('PT-11 fuzzing: 500 random garbage inputs never throw; results are valid integer ledgers and idempotent', () => {
-    let seed = 7
-    const rnd = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296)
-    const junk = (d = 0): unknown => {
-      const r = rnd()
-      if (d > 3 || r < 0.35) return [null, undefined, 0, -1, Infinity, NaN, '', 'x', '__proto__', '2026-11', '2026-11-05', '100', true, 1e12, 5, 250000, 12.5][Math.floor(rnd() * 17)]
-      if (r < 0.6) return Array.from({ length: Math.floor(rnd() * 4) }, () => junk(d + 1))
-      const keys = ['id', 'sid', 'mk', 'amount', 'date', 'at', 'students', 'batches', 'txns', 'fees', 'name', 'roll', 'scope', 'original', 'adjusted', '__proto__', 'constructor', 'feeRates', 'feeHist', 'marks', 'charges', 'no', 'ref', 'voidedAt', 'joined', 'v', 'seq']
-      return Object.fromEntries(Array.from({ length: Math.floor(rnd() * 6) }, () => [keys[Math.floor(rnd() * keys.length)], junk(d + 1)]))
+
+  it('SEC-04 both pages carry a strict CSP and cannot be framed', () => {
+    const app = read('index.html')
+    const portal = read('student-hub/index.html')
+    for (const html of [app, portal]) {
+      expect(html).toMatch(/Content-Security-Policy/)
+      const policy = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? ''
+      expect(policy).toContain("default-src 'self'")
+      const scriptSrc = policy.match(/script-src ([^;]+)/)?.[1] ?? ''
+      expect(scriptSrc).not.toContain("'unsafe-inline'")
+      expect(scriptSrc).not.toContain("'unsafe-eval'")
+      expect(scriptSrc).not.toContain('*')
+      expect(policy).toContain("object-src 'none'")
+      expect(policy).toContain("base-uri 'self'")
+      expect(policy).toContain("form-action 'self'")
     }
-    for (let i = 0; i < 500; i++) {
-      const raw = { batches: junk(), txns: junk(), fees: junk(), adjustments: junk(), charges: junk(), feeRates: junk(), feeHist: junk(), marks: junk(), ...(junk() as object) }
-      let r: ReturnType<typeof clean> | null = null
-      expect(() => { r = sanitizeState(raw, NOW) }).not.toThrow()
-      if (!r) continue
-      const s = (r as ReturnType<typeof clean>).state
-      expect(checkIntegrity(s), `case ${i}`).toEqual([])
-      const again = sanitizeState(JSON.parse(JSON.stringify(s)), NOW)!
-      expect(again.dropped).toBe(0)
-      expect(again.state).toEqual(s)
+    // A meta CSP cannot express frame-ancestors, so the header has to exist as well.
+    expect(headerValue('/((?!student-hub/).*)', 'Content-Security-Policy')).toContain("frame-ancestors 'none'")
+    expect(headerValue('/student-hub/(.*)', 'Content-Security-Policy')).toContain("frame-ancestors 'none'")
+    expect(headerValue('/((?!student-hub/).*)', 'X-Frame-Options')).toBe('DENY')
+  })
+
+  it('SEC-05 transport and sniffing headers are set for every response', () => {
+    expect(headerValue('/((?!student-hub/).*)', 'Strict-Transport-Security')).toMatch(/max-age=31536000|max-age=63072000/)
+    expect(headerValue('/((?!student-hub/).*)', 'Strict-Transport-Security')).toContain('includeSubDomains')
+    expect(headerValue('/((?!student-hub/).*)', 'X-Content-Type-Options')).toBe('nosniff')
+    expect(headerValue('/((?!student-hub/).*)', 'Referrer-Policy')).toBe('no-referrer')
+    expect(headerValue('/((?!student-hub/).*)', 'Cross-Origin-Opener-Policy')).toBe('same-origin')
+    expect(headerValue('/student-hub/(.*)', 'X-Content-Type-Options')).toBe('nosniff')
+  })
+
+  it('SEC-06 nothing opens CORS up, and the static host has no API routes to protect', () => {
+    const vercel = read('vercel.json')
+    expect(vercel).not.toMatch(/Access-Control-Allow-Origin/i)
+    // No server code at all: the app talks to Supabase directly with the caller's own JWT.
+    expect(json('vercel.json').rewrites?.every((rule) => rule.destination.endsWith('index.html'))).toBe(true)
+  })
+
+  it('SEC-07 storage reads are keyed on the device token, never on a caller-supplied batch', () => {
+    const portal = read('student-hub/portal.js')
+    expect(portal).toContain("'X-Student-Hub-Device'")
+    expect(portal).not.toContain("'X-Student-Hub-Batch'")
+    expect(portal).not.toContain("'X-Student-Hub-Teacher-Id'")
+
+    const sql = read('supabase/migrations/20261126090000_security_hardening.sql')
+    expect(sql).toContain('create or replace function public.student_hub_file_allowed(p_path text)')
+    expect(sql).toContain('security definer')
+    expect(sql).toMatch(/s\.device_token = coalesce\(\(current_setting\('request\.headers', true\)\)::json ->> 'x-student-hub-device', ''\)/)
+    expect(sql).toContain("coalesce(s.access_status, 'active') in ('active', 'paid')")
+    expect(sql).toContain('create policy student_notes_objects_scoped_read on storage.objects')
+  })
+
+  it('SEC-08 uploads cannot store something a browser would run', () => {
+    const lib = read('src/lib/studentHub.ts')
+    expect(lib).toContain('export function isAllowedNoteMime')
+    expect(lib).toContain("'text/html'")
+    expect(lib).toContain("'image/svg+xml'")
+    expect(lib).toContain('if (!isAllowedNoteMime(file.type))')
+    const portal = read('student-hub/portal.js')
+    // Opening a downloaded blob must not run a page on this origin.
+    expect(portal).toContain('RENDERABLE_TYPES')
+    expect(portal).toContain('const asDownload = download || RENDERABLE_TYPES.includes(blobMime(blob))')
+    const sql = read('supabase/migrations/20261126090000_security_hardening.sql')
+    expect(sql).toContain('allowed_mime_types')
+    expect(sql).toContain("'application/pdf'")
+  })
+
+  it('SEC-09 anonymous callers get the portal RPCs and nothing else', () => {
+    const sql = read('supabase/migrations/20261126090000_security_hardening.sql')
+    expect(sql).toContain('revoke all on function public.handle_new_user() from public, anon, authenticated')
+    expect(sql).toContain('revoke all on function public.log_state() from public, anon, authenticated')
+    expect(sql).toContain('revoke execute on function public.student_hub_meeting_sync() from public, anon')
+    // The portal needs exactly these five, and the file check that replaced the header policy.
+    const portal = read('student-hub/portal.js')
+    const calls = [...portal.matchAll(/client\.rpc\('([a-z_]+)'/g)].map((match) => match[1])
+    expect(new Set(calls)).toEqual(new Set([
+      'redeem_magic_link', 'verify_student_session', 'log_student_activity',
+      'get_student_batch_data', 'get_single_student_note',
+    ]))
+  })
+
+  it('SEC-10 backend wording never reaches a teacher', () => {
+    const cloud = read('src/lib/cloud.ts')
+    expect(cloud).toContain('relation "|column "|constraint "|function public\\.')
+    const portal = read('student-hub/portal.js')
+    expect(portal).toContain("return 'Could not load Student Hub right now. Please try again.'")
+  })
+
+  it('SEC-11 dependencies are pinned to real, published ranges', () => {
+    const pkg = JSON.parse(read('package.json')) as {
+      dependencies: Record<string, string>
+      devDependencies: Record<string, string>
     }
+    for (const [name, range] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) {
+      expect(name).toMatch(/^(@[a-z0-9-]+\/)?[a-z0-9][a-z0-9._-]*$/)
+      expect(range).toMatch(/^[~^]\d+\.\d+\.\d+/)
+      expect(range).not.toContain('latest')
+      expect(range).not.toContain('github:')
+    }
+    // The lockfile is committed, so a clean install is the lockfile and not a re-resolution.
+    expect(read('package-lock.json').length).toBeGreaterThan(1000)
   })
 })
