@@ -1,5 +1,6 @@
 import TimeField from './TimeField'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import {
   AlertCircle,
@@ -58,6 +59,7 @@ import {
   safeHttpUrl,
   saveMyMeeting,
   fetchStudentActivity,
+  fetchStudentLink,
   generateMagicLink,
   isAccessPaused,
   linkStateOf,
@@ -305,6 +307,33 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       .finally(() => setBusyStudent(null))
   }
 
+  // Escape closes the drawer, like every other sheet in the app.
+  useEffect(() => {
+    if (!activityFor) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setActivityFor(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activityFor])
+
+  /** "Copy link" — the same token the student was sent, without burning a new one. */
+  const copyExistingLink = (student: { name: string }) => {
+    const row = rowFor(student.name)
+    if (!row) return
+    setBusyStudent(row.student_id)
+    void (async () => {
+      const token = await fetchStudentLink(row.student_id)
+      if (!token) {
+        setError(`There is no unused link for ${student.name}. Generate one — it is one tap.`)
+        return
+      }
+      await copyToClipboard(magicLinkUrl(token))
+      setStatus(`Link for ${student.name} copied again. The same link still works until they open it.`)
+      setError(null)
+    })().catch((cause: unknown) => {
+      setError(cloudMessage(cause, 'Could not copy that link. Check your connection and try again.'))
+    }).finally(() => setBusyStudent(null))
+  }
+
   const openActivity = (student: { name: string }) => {
     const row = rowFor(student.name)
     if (!row) {
@@ -314,9 +343,27 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
     setActivityFor({ id: row.student_id, name: student.name })
     setActivity(null)
     setActivityError(null)
-    void fetchStudentActivity(row.student_id)
-      .then(setActivity)
-      .catch((cause: unknown) => setActivityError(cloudMessage(cause, 'Could not load this student\'s activity.')))
+    loadActivity(row.student_id)
+  }
+
+  /** Explicit loader so the drawer can offer a retry instead of spinning forever on a stalled request. */
+  function loadActivity(studentId: string) {
+    setActivity(null)
+    setActivityError(null)
+    let settled = false
+    const timer = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      setActivityError('This is taking longer than expected. Check your connection and tap Retry.')
+    }, 12000)
+    void fetchStudentActivity(studentId)
+      .then((rows) => { if (!settled) { settled = true; window.clearTimeout(timer); setActivity(rows) } })
+      .catch((cause: unknown) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        setActivityError(cloudMessage(cause, 'Could not load this student\'s activity.'))
+      })
   }
 
   const [kind, setKind] = useState<StudentNoteKind>('file')
@@ -784,12 +831,12 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
                       disabled={working || !row}
                       aria-label={linked
                         ? `Reset and generate a new link for ${student.name}`
-                        : pendingLink ? `Re-link ${student.name}` : `Generate magic link for ${student.name}`}
-                      onClick={() => copyLinkFor(student)}
+                        : pendingLink ? `Copy link for ${student.name}` : `Generate magic link for ${student.name}`}
+                      onClick={() => { if (pendingLink) copyExistingLink(student); else copyLinkFor(student) }}
                       className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold disabled:opacity-40 ${linked || pendingLink ? 'bg-white/8 text-white/70 hover:text-white' : 'lens glass-btn text-white'}`}
                     >
-                      {working ? <Loader2 size={13} className="animate-spin" /> : linked ? <Copy size={13} /> : <Link2 size={13} />}
-                      {linked ? 'New link' : pendingLink ? 'Re-link' : 'Generate link'}
+                      {working ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
+                      {linked ? 'New link' : pendingLink ? 'Copy link' : 'Generate link'}
                     </button>
                   </li>
                 )
@@ -1262,14 +1309,20 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
         </p>
       </section>
 
-      {/* Activity drawer: one student, everything they actually opened. Read-only by design. */}
-      {activityFor && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 pb-3 pt-10 backdrop-blur-sm sm:items-center sm:p-6">
+      {/* Activity drawer. Rendered into <body> on purpose: the Hub section is a framer-motion element,
+          so a "fixed" child would be positioned against the section's own transform and paint under
+          the bottom nav (exactly what the screenshot showed). A portal + z-[60] puts it above the nav,
+          centred, with its own scrolling. Read-only apart from the link and pause controls. */}
+      {activityFor && createPortal(
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4"
+          onClick={(event) => { if (event.target === event.currentTarget) setActivityFor(null) }}
+        >
           <div
             role="dialog"
             aria-modal="true"
             aria-label={`Activity for ${activityFor.name}`}
-            className="glass flex max-h-[80vh] w-full max-w-md flex-col rounded-[24px] p-5"
+            className="flex max-h-[min(78vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-[24px] border border-white/10 bg-[#141416] p-5"
           >
             <div className="flex items-start gap-3">
               <span className={iconTile}><Clock3 size={16} /></span>
@@ -1289,9 +1342,18 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
               </button>
             </div>
 
-            <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {activityError ? (
-                <p className="rounded-xl bg-absent/10 px-3 py-2.5 text-[12.5px] text-red-100 ring-1 ring-absent/25" role="alert">{activityError}</p>
+                <div className="rounded-xl bg-absent/10 px-3 py-2.5 ring-1 ring-absent/25" role="alert">
+                  <p className="text-[12.5px] text-red-100">{activityError}</p>
+                  <button
+                    type="button"
+                    onClick={() => loadActivity(activityFor.id)}
+                    className="mt-2 h-9 rounded-full bg-white/8 px-3.5 text-[12px] font-semibold text-white/70 hover:text-white"
+                  >
+                    Retry
+                  </button>
+                </div>
               ) : activity === null ? (
                 <p className="flex items-center gap-2 px-1 py-3 text-[12.5px] text-white/45">
                   <Loader2 size={14} className="animate-spin" /> Loading activity…
@@ -1320,22 +1382,40 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) toggleAccess(student) }}
-              className={`mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-full text-[12.5px] font-semibold ${isAccessPaused(rowFor(activityFor.name)?.access_status)
-                ? 'lens glass-btn text-white'
-                : 'bg-white/8 text-white/60 hover:text-white'}`}
-            >
-              {isAccessPaused(rowFor(activityFor.name)?.access_status) ? 'Resume batch access' : 'Pause batch access'}
-            </button>
-
-            <p className="mt-3 text-[10.5px] leading-snug text-white/25">
-              Recorded automatically when the student opens a note or taps Join Now. Tapping the same note twice in five minutes counts once.
-              Pausing closes their batch immediately; resuming reopens it without a new link.
-            </p>
+            {/* Two actions, both about the link: hand it over again, or close the batch. */}
+            <div className="mt-4 grid shrink-0 gap-2 border-t border-white/8 pt-3">
+              <button
+                type="button"
+                onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) copyExistingLink(student) }}
+                className="lens glass-btn flex h-11 w-full items-center justify-center gap-1.5 rounded-full text-[12.5px] font-semibold text-white"
+              >
+                <Copy size={14} /> Copy link again
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) copyLinkFor(student) }}
+                  className="flex h-11 items-center justify-center gap-1.5 rounded-full bg-white/8 text-[12px] font-semibold text-white/70 hover:text-white"
+                >
+                  <Link2 size={13} /> New link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { const student = batchStudents.find((entry) => entry.name === activityFor.name); if (student) toggleAccess(student) }}
+                  className={`flex h-11 items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold ${isAccessPaused(rowFor(activityFor.name)?.access_status)
+                    ? 'bg-present/12 text-present ring-1 ring-present/25'
+                    : 'bg-white/8 text-white/60 hover:text-white'}`}
+                >
+                  {isAccessPaused(rowFor(activityFor.name)?.access_status) ? 'Resume access' : 'Pause access'}
+                </button>
+              </div>
+              <p className="text-[10.5px] leading-snug text-white/25">
+                Pausing closes their batch immediately; resuming reopens it without a new link.
+              </p>
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </motion.section>
   )

@@ -720,6 +720,16 @@ export const fakeCloud = {
           })
         }
       }
+      // Removed from the batch: the row and its links go with it (cascade in Postgres).
+      if (names.length) {
+        const removed = db.hubStudents.filter((row) => row.teacher_id === me.id
+          && row.batch_name === batch && !names.includes(row.full_name))
+        for (const row of removed) {
+          db.magicLinks = db.magicLinks.filter((link) => link.student_id !== row.id)
+          db.activity = db.activity.filter((entry) => entry.student_id !== row.id)
+        }
+        db.hubStudents = db.hubStudents.filter((row) => !removed.includes(row))
+      }
       // Only the names just published come back: a renamed student reads as a new, unlinked row.
       return {
         data: db.hubStudents
@@ -764,6 +774,12 @@ export const fakeCloud = {
         if (link.student_id === row.id && !link.is_used) { link.is_used = true; link.used_at = stampNow() }
       })
       return { data: true, error: null }
+    }
+    if (name === 'my_student_link') {
+      const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
+      if (!row) return err('this student is not on your roster', '22023')
+      const link = db.magicLinks.filter((entry) => entry.student_id === row.id && !entry.is_used).at(-1)
+      return { data: link?.token ?? null, error: null }
     }
     if (name === 'set_student_access') {
       const row = db.hubStudents.find((entry) => entry.id === String(args.p_student_id ?? '') && entry.teacher_id === me.id)
