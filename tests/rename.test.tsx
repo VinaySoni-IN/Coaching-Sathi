@@ -29,7 +29,7 @@ describe('App renamed to "Coaching Sathi" (RN)', () => {
   })
   it('RN-03 the service worker uses a new cache name and never caches teacher-specific Supabase responses', () => {
     const sw = read('public/sw.js')
-    expect(sw).toMatch(/const VERSION = 'coachsathi-v21'/)
+    expect(sw).toMatch(/const VERSION = 'coachsathi-v22'/)
     expect(sw).toMatch(/url\.origin !== self\.location\.origin\) return/)
   })
   it('RN-04 no user-facing "Coaching Desk" is left in the app (only the internal upgrade constant and storage keys)', () => {

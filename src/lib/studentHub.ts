@@ -406,6 +406,15 @@ export async function generateMagicLink(studentId: string): Promise<string> {
   return token
 }
 
+/** The link that is still unused, so the teacher can copy it again without burning it. */
+export async function fetchStudentLink(studentId: string): Promise<string> {
+  const id = cleanLine(studentId, 64)
+  if (!id) throw new Error('Tap the student first.')
+  const { data, error } = await sb().rpc('my_student_link', { p_student_id: id })
+  if (error) throw error
+  return cleanLine(data, 128)
+}
+
 /** Unlinks the phone that holds this student's device token. History is kept. */
 export async function resetStudentDevice(studentId: string): Promise<void> {
   const { data, error } = await sb().rpc('reset_student_device', { p_student_id: studentId })

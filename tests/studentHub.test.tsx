@@ -630,7 +630,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v21')
+    expect(read('public/sw.js')).toContain('coachsathi-v22')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
@@ -668,9 +668,18 @@ describe('Student Portal and RLS (SP)', () => {
     expect(writeText.mock.calls.at(-1)?.[0]).not.toContain('Aarav')
     expect(writeText.mock.calls.at(-1)?.[0]).not.toContain('NEET')
 
-    // A second tap kills the first link before the second exists — that is what "single use" means.
-    fireEvent.click(within(neet).getByRole('button', { name: 'Re-link Aarav Sharma' }))
+    // "Copy link" hands over the same token again: copying must not burn a link the student has not opened.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Copy link for Aarav Sharma' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2))
+    expect(fakeMagicLinksFor('t1')).toHaveLength(1)
+    expect(writeText.mock.calls.at(-1)?.[0]).toContain(`?token=${first.token}`)
+
+    // A deliberately new link kills the first before the second exists — that is what single use means.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
+    const linkDrawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
+    fireEvent.click(await within(linkDrawer).findByRole('button', { name: 'New link' }))
     await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(2))
+    fireEvent.click(within(linkDrawer).getByRole('button', { name: 'Close activity' }))
     const [stale, fresh] = fakeMagicLinksFor('t1')
     expect(stale.is_used).toBe(true)
     expect(fresh.is_used).toBe(false)
@@ -963,6 +972,15 @@ describe('Student Portal and RLS (SP)', () => {
     expect(sql).toContain('grant execute on function public.generate_magic_link(uuid) to authenticated;')
     expect(sql).not.toContain('grant execute on function public.generate_magic_link(uuid) to anon')
     expect(sql).not.toContain('grant select on public.magic_links to anon')
+
+    // Re-copy and revoke: the newest migration adds both, and prunes only against a real roster.
+    const recopy = read('supabase/migrations/20261125200000_link_recopy_and_revoke.sql')
+    expect(recopy).toContain('create or replace function public.my_student_link(p_student_id uuid)')
+    expect(recopy).toContain('where l.student_id = p_student_id and not l.is_used')
+    expect(recopy).toMatch(/delete from public\.students s[\s\S]{0,200}not \(s\.full_name = any \(v_names\)\)/)
+    expect(recopy).toContain('if coalesce(array_length(v_names, 1), 0) > 0 then')
+    expect(recopy).toContain('grant execute on function public.my_student_link(uuid) to authenticated;')
+    expect(recopy).not.toContain('to anon;')
   })
 
   it('SP-08 a device token cannot reach another batch, and a pause closes the door', async () => {
@@ -1017,7 +1035,7 @@ describe('Student Portal and RLS (SP)', () => {
     // Pause: the server refuses, and the phone that was linked is unlinked with it.
     fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
     const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Pause batch access' }))
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Pause access' }))
     await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.access_status).toBe('suspended'))
     const paused = await sb().rpc('get_student_batch_data', { p_device_token: device })
     expect((paused.data as { error?: string }).error).toBe('Batch access paused. Please contact your teacher.')
@@ -1029,10 +1047,56 @@ describe('Student Portal and RLS (SP)', () => {
     expect((noteWhilePaused.data as { error?: string }).error).toContain('paused')
 
     // Resume, and the badge on the row stops saying Paused.
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Resume batch access' }))
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Resume access' }))
     await waitFor(() => expect(fakeHubStudentsFor('t1').find((row) => row.full_name === 'Aarav Sharma')?.access_status).toBe('active'))
     const resumed = await sb().rpc('get_student_batch_data', { p_device_token: device })
     expect((resumed.data as { batch_name: string }).batch_name).toBe('NEET Biology')
+  })
+
+  it('SP-09 removing a student revokes the link, and the drawer floats above the nav', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    await openHub()
+    const neet = screen.getByRole('region', { name: 'Students in NEET Biology' })
+    fireEvent.click(await within(neet).findByRole('button', { name: 'Generate magic link for Aarav Sharma' }))
+    await waitFor(() => expect(fakeMagicLinksFor('t1')).toHaveLength(1))
+    const link = fakeMagicLinksFor('t1')[0]
+    const redeemed = await sb().rpc('redeem_magic_link', { p_token: link.token })
+    const device = (redeemed.data as { device_token: string }).device_token
+    expect((await sb().rpc('get_student_batch_data', { p_device_token: device })).data).toBeTruthy()
+
+    // The drawer is portalled to <body>, so no transformed parent can trap it under the bottom nav.
+    fireEvent.click(within(neet).getByRole('button', { name: 'Open activity for Aarav Sharma' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Activity for Aarav Sharma' })
+    expect(drawer.parentElement?.parentElement).toBe(document.body)
+    expect(drawer.className).toContain('max-h-[min(78vh,620px)]')
+    // Both link actions live in the drawer, including the copy-again one.
+    expect(within(drawer).getByRole('button', { name: 'Copy link again' })).toBeTruthy()
+    expect(within(drawer).getByRole('button', { name: 'New link' })).toBeTruthy()
+    expect(within(drawer).getByRole('button', { name: 'Pause access' })).toBeTruthy()
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Close activity' }))
+
+    // A roster without this student is how "removed from the batch" reaches the server.
+    const afterRemoval = await sb().rpc('sync_my_students', {
+      p_batch_name: 'NEET Biology',
+      p_teacher_name: 'Priya Sharma',
+      p_students: [{ name: 'Ishita Rao' }],
+    })
+    expect(afterRemoval.error).toBeNull()
+    await waitFor(() => expect(fakeHubStudentsFor('t1').some((row) => row.full_name === 'Aarav Sharma')).toBe(false))
+    expect(fakeHubStudentsFor('t1').some((row) => row.full_name === 'Ishita Rao')).toBe(true)
+    // The link and the phone die with the row.
+    expect(fakeMagicLinksFor('t1')).toHaveLength(0)
+    const revoked = await sb().rpc('get_student_batch_data', { p_device_token: device })
+    expect((revoked.data as { error?: string }).error).toBe('Unauthorized or inactive batch access')
+
+    // An empty roster means "nothing loaded yet", not "everyone left": nothing is pruned.
+    const before = fakeHubStudentsFor('t1').length
+    await sb().rpc('sync_my_students', {
+      p_batch_name: 'NEET Biology', p_teacher_name: 'Priya Sharma', p_students: [],
+    })
+    expect(fakeHubStudentsFor('t1').length).toBe(before)
   })
 
   it('SP-05 keeps the locked card on one left edge with its own padding', () => {

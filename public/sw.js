@@ -1,5 +1,5 @@
 /* Coaching Sathi service worker — offline-first app shell, works under any GitHub Pages sub-path */
-const VERSION = 'coachsathi-v21' // Student Hub is a separate read-only page; cross-origin Supabase responses are never cached
+const VERSION = 'coachsathi-v22' // Student Hub is a separate read-only page; cross-origin Supabase responses are never cached
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192-v10.png', './icon-512-v10.png', './icon-maskable-512-v10.png', './apple-touch-icon-v10.png', './favicon-anim-32-v13.png', './favicon-128-v13.png', './favicon-v13.ico']
 
 self.addEventListener('install', (e) => {
