@@ -13,7 +13,7 @@
 'use strict'
 
 import {
-  cleanBody, cleanLine, escapeHtml, formatClock, formatDurationLabel, formatRemaining,
+  cleanBody, cleanLine, escapeHtml, formatClock, formatRemaining,
   formatStartsIn, initials, safeHttpUrl,
 } from './sanitize.js?v=5'
 
@@ -397,22 +397,50 @@ function visibleMeetings(now = Date.now()) {
     })
 }
 
+/** Teacher form labels that are not a class name. Anything here renders as the neutral fallback. */
+const TITLE_PLACEHOLDERS = /^(live class( session(s)?)?|class|new class|schedule (a )?class|schedule a session|untitled|untitled class)$/i
+
 function meetingHeading(row) {
   const title = cleanLine(row.meeting_title || row.topic, 140)
-  // Titles are optional when a teacher goes live: fall back to a proper class label, not a form name.
-  return !title || /^live class$/i.test(title) ? 'Live Class Session' : title
+  // A title is optional when a teacher goes live. A form heading must never become the class name.
+  return !title || TITLE_PLACEHOLDERS.test(title) ? 'Live class' : title
 }
 
-function updateRemaining(expiry) {
+/** "45 min" / "1 hr 15 min" — short enough to sit inside one quiet line. */
+function classLength(minutes) {
+  const n = Math.max(1, Math.min(480, Math.round(Number(minutes) || 45)))
+  const hours = Math.floor(n / 60)
+  const rest = n % 60
+  if (!hours) return `${rest} min`
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`
+}
+
+/** How much of the class has already gone by, as a 0–100 number for the thin progress line. */
+function elapsedPercent(row, now = Date.now()) {
+  const start = Date.parse(row.scheduled_start || row.created_at || '')
+  const end = Date.parse(row.expires_at || '')
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0
+  return Math.max(0, Math.min(100, Math.round(((now - start) / (end - start)) * 100)))
+}
+
+function updateRemaining(expiry, startIso) {
   const remaining = document.getElementById('remaining-time')
   if (!remaining) return
-  const ms = expiry > 0 ? expiry - Date.now() : 0
+  const now = Date.now()
+  const ms = expiry > 0 ? expiry - now : 0
   if (expiry > 0 && ms <= 0) {
     // The duration is over: refresh so the card disappears instead of offering a dead join link.
     void loadAll()
     return
   }
-  remaining.textContent = expiry > 0 ? `Ends in ${formatRemaining(ms)}` : ''
+  remaining.textContent = expiry > 0 ? `${formatRemaining(ms)} left` : ''
+  const bar = document.getElementById('live-progress')
+  if (bar) {
+    const start = Date.parse(startIso || '')
+    const span = expiry > 0 && Number.isFinite(start) ? expiry - start : 0
+    const share = span > 0 ? Math.max(2, Math.min(100, Math.round(((now - start) / span) * 100))) : 0
+    bar.style.width = `${share}%`
+  }
 }
 
 /** Schedules re-render every 30s so a scheduled class flips to live by itself. */
@@ -421,62 +449,67 @@ function tickSchedules() {
   visibleMeetings(now).forEach((row) => {
     if (meetingState(row, now) !== 'live' || !row.expires_at) return
     const expiry = Date.parse(row.expires_at)
-    if (Number.isFinite(expiry)) updateRemaining(expiry)
+    if (Number.isFinite(expiry)) updateRemaining(expiry, row.scheduled_start)
   })
 }
 
+/**
+ * One class, one card: a quiet status line, the class name, one line of facts, one action.
+ * Nothing is spread across pills — a student only ever has to find the single button.
+ */
 function meetingCard(row) {
   const now = Date.now()
   const stateNow = meetingState(row, now)
   const live = stateNow === 'live'
   const href = safeHttpUrl(row.meeting_url || row.meeting_link)
+  const title = meetingHeading(row)
+  const length = classLength(row.duration_minutes)
 
   const article = elem('article', `live-session meeting-card ${live ? 'is-live' : 'is-scheduled'}`)
-  const main = elem('div', 'live-session-main')
 
-  const badges = elem('div', 'live-badges')
+  const status = elem('div', `meeting-status ${live ? 'is-live' : 'is-scheduled'}`)
+  const dot = elem('span', live ? 'live-dot' : 'status-dot')
+  dot.setAttribute('aria-hidden', 'true')
+  status.append(dot, elem('span', 'meeting-state', live ? 'Live now' : 'Upcoming'))
   if (live) {
-    const badge = elem('div', 'live-badge')
-    const dot = elem('span', 'live-dot')
-    dot.setAttribute('aria-hidden', 'true')
-    badge.append(dot, document.createTextNode('LIVE NOW'))
-    badges.append(badge)
-  } else {
-    badges.append(elem('span', 'schedule-badge', 'SCHEDULED'))
-  }
-  badges.append(elem('span', 'duration-badge', `Duration: ${formatDurationLabel(row.duration_minutes)}`))
-  if (live) {
-    const remaining = elem('span', 'remaining-badge', '')
+    const remaining = elem('span', 'meeting-time')
     remaining.id = 'remaining-time'
-    badges.append(remaining)
+    remaining.textContent = row.expires_at ? `${formatRemaining(Date.parse(row.expires_at) - now)} left` : ''
+    status.append(remaining)
+  } else {
+    const startsAt = formatClock(row.scheduled_start)
+    if (startsAt) status.append(elem('span', 'meeting-time', `Starts ${startsAt}`))
   }
-  main.append(badges, elem('div', 'live-topic', meetingHeading(row)))
+  article.append(status, elem('h3', 'meeting-title', title))
 
-  const meta = []
-  meta.push(cleanLine(row.teacher_name, 120) || teacherNameFor(state.teacherId))
-  const batch = cleanLine(row.batch_name, 80)
-  if (batch) meta.push(`Batch: ${batch}`)
-  const startClock = formatClock(row.scheduled_start)
-  if (startClock) meta.push(`${live ? 'Started' : 'Starts'} ${startClock}`)
+  const facts = [cleanLine(row.teacher_name, 120) || teacherNameFor(state.teacherId)]
   if (!live) {
     const startsIn = formatStartsIn(Date.parse(row.scheduled_start || '') - now)
-    if (startsIn) meta.push(startsIn)
+    if (startsIn) facts.push(startsIn.replace(/^Starts in /, 'in '))
   }
-  if (live && row.expires_at) meta.push(`Ends ${formatClock(row.expires_at)}`)
-  main.append(elem('div', 'live-meta', meta.join(' · ')))
+  facts.push(length)
+  article.append(elem('p', 'meeting-sub', facts.filter(Boolean).join(' · ')))
 
-  article.append(main)
+  if (live) {
+    const track = elem('div', 'meeting-progress')
+    track.setAttribute('aria-hidden', 'true')
+    const bar = elem('span', 'meeting-progress-fill')
+    bar.id = 'live-progress'
+    bar.style.width = `${elapsedPercent(row, now)}%`
+    track.append(bar)
+    article.append(track)
+  }
 
   if (!href) {
     article.append(elem('span', 'join-btn is-disabled', live ? 'Link coming soon' : 'Link on the way'))
   } else if (live) {
-    const join = elem('a', 'join-btn', 'Join Now ↗')
+    const join = elem('a', 'join-btn is-live', 'Join class ↗')
     join.href = href
     join.target = '_blank'
     join.rel = 'noopener noreferrer'
-    join.setAttribute('aria-label', `Join ${meetingHeading(row)}`)
+    join.setAttribute('aria-label', `Join ${title}`)
     // The only class signal the teacher gets: a real tap on the live link.
-    join.addEventListener('click', () => logActivity('class_attended', row.id, meetingHeading(row)))
+    join.addEventListener('click', () => logActivity('class_attended', row.id, title))
     article.append(join)
   } else {
     // Scheduled: the link is visible but inactive until the start time arrives.
@@ -493,21 +526,10 @@ function renderLive() {
   setSyncLabel(liveRows.length ? 'Live now' : 'Up to date', liveRows.length > 0)
   els.liveContent.replaceChildren()
 
-  const heading = elem('div', 'meetings-head')
-  heading.append(
-    elem('span', 'meetings-head-title', liveRows.length
-      ? `${liveRows.length} class${liveRows.length === 1 ? '' : 'es'} live now`
-      : 'Your classes'),
-    elem('span', 'meetings-head-count', rows.length
-      ? `${rows.length} upcoming or live`
-      : 'Nothing scheduled'),
-  )
-  els.liveContent.append(heading)
-
   if (!rows.length) {
     const offline = elem('div', 'offline-state')
     offline.append(
-      elem('strong', '', 'No scheduled classes right now'),
+      elem('strong', '', 'No class scheduled'),
       elem('span', '', 'Your teacher will schedule the next class soon. Notes are still below.'),
     )
     els.liveContent.append(offline)

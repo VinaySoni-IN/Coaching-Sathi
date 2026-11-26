@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=10" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
   </head>
   <body>
     <div class="ambient" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span></div>
@@ -29,17 +29,14 @@
 
     <main class="shell">
       <section id="live-card" class="glass live-card" aria-labelledby="live-title" aria-live="polite">
-        <div class="brand-row">
-          <span class="brand-mark" aria-hidden="true">CS</span>
-          <div class="brand-copy">
-            <span class="brand-name">Coaching Sathi</span>
-            <span class="brand-sub">Student Hub</span>
+        <div class="live-head">
+          <div class="live-head-copy">
+            <p class="eyebrow">Live &amp; upcoming</p>
+            <h1 id="live-title">Your classes</h1>
           </div>
-          <span id="sync-label" class="sync-label">Checking for updates…</span>
+          <span id="sync-label" class="sync-label">Checking…</span>
         </div>
 
-        <p class="eyebrow">Your classroom, right here</p>
-        <h1 id="live-title">Live Meeting / Class Preview</h1>
         <div id="live-content" class="live-content">
           <div class="loading-line"><span class="spinner" aria-hidden="true"></span> Checking for a live class…</div>
         </div>
@@ -108,6 +105,6 @@
 
     <!-- Relative paths only: works from /student-hub/ on GitHub Pages and from dist/student-hub/ on Vercel. -->
     <script src="./vendor/supabase.js"></script>
-    <script type="module" src="./portal.js?v=9"></script>
+    <script type="module" src="./portal.js?v=10"></script>
   </body>
 </html>

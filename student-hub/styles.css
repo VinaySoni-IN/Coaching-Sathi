@@ -112,12 +112,6 @@ a { color: inherit; }
   pointer-events: none;
 }
 
-.brand-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 28px;
-}
 .brand-mark {
   display: grid;
   width: 46px;
@@ -133,9 +127,6 @@ a { color: inherit; }
   font-weight: 700;
   letter-spacing: -.03em;
 }
-.brand-copy { display: flex; flex-direction: column; line-height: 1.15; }
-.brand-name { font-family: var(--font-display); font-size: 17px; font-weight: 600; }
-.brand-sub { margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 500; }
 .sync-label {
   margin-left: auto;
   padding: 7px 11px;
@@ -162,7 +153,6 @@ h1 { margin: 0; font-size: clamp(28px, 5.2vw, 42px); line-height: 1.04; font-wei
 h2 { margin: 0; font-size: clamp(23px, 4vw, 31px); line-height: 1.1; font-weight: 600; }
 h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 
-.live-content { margin-top: 22px; }
 .loading-line, .offline-state { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
 .spinner {
   width: 16px;
@@ -175,44 +165,7 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.live-session {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  padding: 18px;
-  border: 1px solid rgba(94,242,176,.24);
-  border-radius: 26px;
-  background: linear-gradient(135deg, rgba(94,242,176,.12), rgba(255,255,255,.035));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
-}
-.live-session + .live-session { margin-top: 12px; }
-.live-session-main { min-width: 220px; flex: 1 1 280px; }
-.live-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 10px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255,93,115,.14);
-  color: #ffd5dc;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--live);
-  box-shadow: 0 0 0 0 rgba(255,93,115,.65);
-  animation: pulse 1.45s ease-out infinite;
-}
 @keyframes pulse { 70% { box-shadow: 0 0 0 10px rgba(255,93,115,0); } 100% { box-shadow: 0 0 0 0 rgba(255,93,115,0); } }
-.live-topic { font-family: var(--font-display); font-size: 22px; font-weight: 600; line-height: 1.18; }
-.live-meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
 
 .join-btn, .action-btn {
   display: inline-flex;
@@ -392,12 +345,9 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 @media (max-width: 640px) {
   .shell { width: min(100% - 20px, 760px); padding-top: max(env(safe-area-inset-top), 14px); }
   .live-card { padding: 19px; border-radius: 28px; }
-  .brand-row { margin-bottom: 22px; }
   .sync-label { font-size: 10px; padding: 6px 9px; }
   .toolbar { grid-template-columns: 1fr 1fr; }
   .search-field { grid-column: 1 / -1; }
-  .live-session { align-items: stretch; }
-  .join-btn { width: 100%; }
   .footer { flex-direction: column; }
 }
 
@@ -445,17 +395,6 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .onboarding-sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .onboarding-note { margin: 16px 0 0; color: var(--faint); font-size: 11px; text-align: center; }
 
-.live-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.duration-badge, .remaining-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 11px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-}
-.duration-badge { background: rgba(94,242,176,.12); border: 1px solid rgba(94,242,176,.3); color: #bfffe2; }
-.remaining-badge { background: rgba(255,255,255,.08); border: 1px solid var(--line); color: #fff; font-variant-numeric: tabular-nums; }
 
 .scope-summary { margin: 0 2px 12px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .folder-group { display: grid; gap: 12px; }
@@ -484,69 +423,6 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
    v3 — multiple meetings, schedule badges, direct note links and border-safe action rows.
    Every button group wraps instead of overflowing, and nothing touches a card edge.
    ------------------------------------------------------------------------------------------------ */
-.meetings-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px 12px;
-  margin-bottom: 12px;
-  padding: 0 2px;
-}
-.meetings-head-title { font-family: var(--font-display); font-size: 15px; font-weight: 600; }
-.meetings-head-count { color: var(--faint); font-size: 12px; }
-
-.meeting-card { align-items: flex-start; }
-.meeting-card.is-scheduled {
-  border-color: rgba(255,255,255,.14);
-  background: linear-gradient(135deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
-}
-.meeting-card .live-session-main { min-width: 0; }
-.meeting-card .live-topics { overflow-wrap: anywhere; }
-
-.live-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
-.live-badges .live-badge { margin-bottom: 0; }
-.schedule-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.18);
-  background: rgba(255,255,255,.07);
-  color: #dfe9ff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.duration-badge, .remaining-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(0,0,0,.28);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.remaining-badge { color: var(--present); border-color: rgba(94,242,176,.28); }
-
-.join-btn.is-disabled {
-  min-height: 48px;
-  padding: 0 18px;
-  border-radius: 999px;
-  border: 1px dashed rgba(255,255,255,.20);
-  background: rgba(255,255,255,.04);
-  color: var(--faint);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: default;
-  box-shadow: none;
-}
-.join-btn.is-disabled:hover { border-color: rgba(255,255,255,.20); background: rgba(255,255,255,.04); }
 
 .note-card { border-radius: 12px; }
 .note-card.is-target {
@@ -559,7 +435,7 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   100% { background-color: transparent; }
 }
 
-.note-actions, .live-badges, .note-top, .folder-head, .toolbar, .topbar-inner {
+.note-actions, .note-top, .folder-head, .toolbar, .topbar-inner {
   row-gap: 10px;
   column-gap: 8px;
 }
@@ -569,47 +445,136 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 
 /* .locked-card sets its own padding: the clamp below is for the dashboard cards. */
 .glass, .live-card, .materials, .folder-group, .note-card, .toolbar { padding: clamp(14px, 2.4vw, 22px); }
-.live-content { display: grid; gap: 12px; }
 .empty-card { padding: 22px; }
 
 @media (max-width: 640px) {
-  .meeting-card { flex-direction: column; align-items: stretch; }
-  .meeting-card .join-btn, .meeting-card .join-btn.is-disabled { width: 100%; }
   .note-actions { gap: 8px; }
   .note-actions .action-btn { flex: 1 1 auto; }
 }
-
-/* ------------------------------------------------------------------------------------------------
-   v4 — live-card rhythm and soft-card geometry.
-   The LIVE NOW card is a single 16px stack: details, then the Join pill. Nothing stretches, so no
-   blank void appears between the class details and the button on tall screens.
-   ------------------------------------------------------------------------------------------------ */
-.live-content { display: grid; gap: 16px; margin-top: 16px; }
-.live-card { border-radius: 24px; }
-.live-session {
-  align-items: flex-start;
-  gap: 16px;
-  row-gap: 12px;
-  padding: 18px;
-  border-radius: 24px;
-}
-.live-session-main { display: grid; align-content: start; gap: 6px; }
-.live-session-main .live-badges { margin-bottom: 0; }
-.live-session-main .live-meta { margin-top: 0; }
-.live-topic { font-size: 21px; line-height: 1.2; }
-.join-btn, .join-btn.is-disabled { align-self: center; }
 
 .note-card, .folder-group, .toolbar, .materials { border-radius: 24px; }
 .note-card { border-radius: 20px; }
 .toolbar { border-radius: 24px; }
 
-@media (max-width: 640px) {
-  .live-session { padding: 16px; border-radius: 22px; }
-  .meeting-card { flex-direction: column; align-items: stretch; gap: 14px; }
-  .meeting-card .join-btn,
-  .meeting-card .join-btn.is-disabled {
-    width: 100%;
-    align-self: stretch;
-    margin-top: 2px;
-  }
+/* ------------------------------------------------------------------------------------------------
+   v5 — one calm class card.
+   The old card was a wrapping flex line carrying three pills (LIVE NOW, Duration, Ends in) and a
+   button that could be pushed to the far edge of a stretched row. That is what made the top of the
+   page look loud and half-empty at once. It is now a fixed grid stack: status line, class name, one
+   line of facts, an optional progress line, then one full-width action. Nothing floats, nothing
+   stretches, so the card is exactly as tall as its content on every screen.
+   ------------------------------------------------------------------------------------------------ */
+.live-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.live-head-copy { min-width: 0; flex: 1 1 auto; }
+.live-head .eyebrow { margin: 0 0 3px; }
+.live-head h1 { font-size: clamp(23px, 5.6vw, 30px); line-height: 1.05; }
+.sync-label { flex: 0 0 auto; margin-left: 0; font-size: 10px; padding: 6px 10px; }
+
+.live-content { display: grid; align-content: start; gap: 12px; margin-top: 0; }
+
+.live-session {
+  display: grid;
+  align-content: start;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255,255,255,.055), rgba(255,255,255,.02));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+.live-session.is-live {
+  border-color: rgba(94,242,176,.30);
+  background: linear-gradient(135deg, rgba(94,242,176,.13), rgba(255,255,255,.03));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+}
+
+.meeting-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .10em;
+  text-transform: uppercase;
+}
+.meeting-status.is-live { color: #ffd5dc; }
+.status-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--faint); }
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--live);
+  box-shadow: 0 0 0 0 rgba(255,93,115,.65);
+  animation: pulse 1.6s ease-out infinite;
+}
+.meeting-time {
+  margin-left: auto;
+  color: rgba(255,255,255,.62);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+.meeting-status.is-live .meeting-time { color: #b9f7d8; }
+
+.meeting-card .meeting-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -.02em;
+  overflow-wrap: anywhere;
+}
+.meeting-sub { margin: 6px 0 0; color: var(--faint); font-size: 12px; line-height: 1.45; }
+
+.meeting-progress {
+  height: 3px;
+  margin: 13px 0 1px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  overflow: hidden;
+}
+.meeting-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(94,242,176,.5), var(--present));
+  transition: width .6s ease;
+}
+
+.join-btn.is-live {
+  justify-self: stretch;
+  width: 100%;
+  min-height: 46px;
+  margin-top: 14px;
+  border: 1px solid rgba(94,242,176,.42);
+  border-radius: 999px;
+  background: rgba(94,242,176,.16);
+  box-shadow: none;
+  color: #eafff5;
+  font-size: 14px;
+}
+.join-btn.is-live:hover { border-color: rgba(94,242,176,.62); background: rgba(94,242,176,.24); }
+.join-btn.is-disabled {
+  justify-self: stretch;
+  width: 100%;
+  min-height: 42px;
+  margin-top: 14px;
+  padding: 0 14px;
+  border: 1px dashed rgba(255,255,255,.16);
+  border-radius: 999px;
+  background: rgba(255,255,255,.035);
+  box-shadow: none;
+  color: var(--faint);
+  font-size: 13px;
+  font-weight: 600;
+}
+.join-btn.is-disabled:hover { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.035); }
+
+@media (max-width: 380px) {
+  .live-session { padding: 14px; border-radius: 20px; }
+  .meeting-card .meeting-title { font-size: 18.5px; }
 }
