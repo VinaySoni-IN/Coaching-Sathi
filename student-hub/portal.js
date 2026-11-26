@@ -144,12 +144,16 @@ function teacherNameFor() {
  * get_student_batch_data — the server's answer, never localStorage. A file path only ever arrives
  * with that same answer, so a student can reach files of their own batch and nothing else.
  */
+/**
+ * Storage reads are authorised by the device token the server issued, never by the batch name.
+ * A batch header would be client-supplied: any student could swap in another batch of the same
+ * teacher. The token is a secret, and the storage policy only resolves paths it can prove.
+ */
 function scopeHeaders() {
   return {
     apikey: state.config.key,
     Authorization: `Bearer ${state.config.key}`,
-    'X-Student-Hub-Batch': state.batch,
-    'X-Student-Hub-Teacher-Id': state.teacherId,
+    'X-Student-Hub-Device': cleanLine(state.session && state.session.device_token, 128),
   }
 }
 
@@ -554,11 +558,27 @@ async function fetchFile(path) {
   return response.blob()
 }
 
+/** Anything a browser would render as a page is downloaded instead: a blob URL inherits this origin. */
+const RENDERABLE_TYPES = [
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+  'application/xml',
+  'text/xml',
+  'application/javascript',
+  'text/javascript',
+]
+
+function blobMime(blob) {
+  return cleanLine(blob && blob.type, 120).split(';')[0].trim().toLowerCase()
+}
+
 function openBlob(blob, fileName, download) {
+  const asDownload = download || RENDERABLE_TYPES.includes(blobMime(blob))
   const objectUrl = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = objectUrl
-  if (download) {
+  if (asDownload) {
     link.download = fileName
   } else {
     link.target = '_blank'

@@ -633,7 +633,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v23')
+    expect(read('public/sw.js')).toContain('coachsathi-v24')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
@@ -794,9 +794,10 @@ describe('Student Portal and RLS (SP)', () => {
     // The header badge is read-only and says where the batch came from.
     expect(portal).toContain('Enrolled Batch: ${state.batch}')
     expect(portal).toContain('· Verified')
-    // Storage headers carry the server's answer, not localStorage.
-    expect(portal).toContain("'X-Student-Hub-Batch': state.batch")
-    expect(portal).toContain("'X-Student-Hub-Teacher-Id': state.teacherId")
+    // Storage is authorised by the issued device token only: a batch header is caller-supplied.
+    expect(portal).toContain("'X-Student-Hub-Device': cleanLine(state.session && state.session.device_token, 128)")
+    expect(portal).not.toContain("'X-Student-Hub-Batch'")
+    expect(portal).not.toContain("'X-Student-Hub-Teacher-Id'")
     expect(portal).toContain('function scopeHeaders()')
     expect(portal).toContain('/storage/v1/object/${STORAGE_BUCKET}/')
     // One calm card: a status line, the class name, one facts line and a single action.
@@ -1189,7 +1190,7 @@ describe('Student Portal and RLS (SP)', () => {
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
     expect(html).toMatch(/styles\.css\?v=11/)
-    expect(html).toMatch(/portal\.js\?v=10/)
+    expect(html).toMatch(/portal\.js\?v=11/)
   })
 
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
