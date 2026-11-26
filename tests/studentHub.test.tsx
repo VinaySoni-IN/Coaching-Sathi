@@ -591,7 +591,10 @@ describe('Student Hub Manager (SH)', () => {
 describe('Student Portal and RLS (SP)', () => {
   it('SP-01 is a single-page, relative-path portal with read-only Supabase reads and teacher-only writes', () => {
     const html = read('student-hub/index.html')
-    expect(html).toContain('Live Meeting / Class Preview')
+    expect(html).toContain('Your classes')
+    // The duplicate brand block and the developer headline are gone: the top bar already identifies the Hub.
+    expect(html).not.toContain('brand-row')
+    expect(html).not.toContain('Live Meeting / Class Preview')
     expect(html).toMatch(/href="\.\/styles\.css(?:\?v=\d+)?"/)
     expect(html).toMatch(/src="\.\/vendor\/supabase\.js"/)
     expect(html).toMatch(/src="\.\/portal\.js(?:\?v=\d+)?"/)
@@ -606,8 +609,8 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).not.toContain('.from(')
     expect(portal).toContain("client.rpc('get_student_batch_data'")
     expect(portal).toContain("client.rpc('get_single_student_note'")
-    expect(portal).toContain('No scheduled classes right now')
-    expect(portal).toContain('Join Now')
+    expect(portal).toContain('No class scheduled')
+    expect(portal).toContain('Join class')
     expect(portal).toContain('postgres_changes')
     // No table writes anywhere. (searchParams.delete() is URL cleanup, not a row delete.)
     expect(portal).not.toMatch(/\.(insert|upsert)\s*\(/)
@@ -796,9 +799,27 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain("'X-Student-Hub-Teacher-Id': state.teacherId")
     expect(portal).toContain('function scopeHeaders()')
     expect(portal).toContain('/storage/v1/object/${STORAGE_BUCKET}/')
-    expect(portal).toContain('Duration: ${formatDurationLabel(row.duration_minutes)}')
-    expect(portal).toContain('Ends in ${formatRemaining(ms)}')
+    // One calm card: a status line, the class name, one facts line and a single action.
+    expect(portal).toContain("elem('h3', 'meeting-title', title)")
+    expect(portal).toContain("elem('p', 'meeting-sub', facts.filter(Boolean).join(' · '))")
+    expect(portal).toContain('`${formatRemaining(ms)} left`')
+    expect(portal).toContain("'Join class ↗'")
     expect(portal).toContain('Opens at start time')
+    // The three-pill header that made the card loud is gone, and form labels never become class names.
+    expect(portal).not.toContain('Duration: ')
+    expect(portal).not.toContain('LIVE NOW')
+    expect(portal).not.toContain('Ends in ')
+    expect(portal).toContain('TITLE_PLACEHOLDERS')
+    expect(portal).toMatch(/schedule \(a \)\?class/)
+    expect(portal).toContain('function classLength(minutes)')
+    expect(portal).toContain('function elapsedPercent(row, now = Date.now())')
+    // A grid stack cannot leave a void between the details and the button.
+    const css = read('student-hub/styles.css')
+    expect(css).toMatch(/\.live-session \{[\s\S]{0,120}display: grid;/)
+    expect(css).toMatch(/\.live-content \{[^}]*align-content: start;/)
+    expect(css).not.toContain('duration-badge')
+    expect(css).not.toContain('.live-badges')
+    expect(css).toContain('.meeting-progress-fill')
     expect(portal).toContain('noteShareUrl')
     expect(portal).toContain('new URLSearchParams(location.search)')
     expect(portal).toContain('Copy share link')
@@ -1127,8 +1148,8 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=10/)
-    expect(html).toMatch(/portal\.js\?v=9/)
+    expect(html).toMatch(/styles\.css\?v=11/)
+    expect(html).toMatch(/portal\.js\?v=10/)
   })
 
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
@@ -1157,10 +1178,11 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.switch-wrap')
     expect(css).toMatch(/\.footer\s*\{[^}]*flex-direction:\s*column/)
 
-    // v4 geometry: the live card is one 16px stack and a title-less class still reads well.
-    expect(css).toMatch(/\.live-content\s*\{[^}]*gap:\s*16px/)
-    expect(css).toMatch(/\.live-session\s*\{[^}]*border-radius:\s*24px/)
-    expect(portal).toContain('Live Class Session')
+    // v5 geometry: the live card is a fixed grid stack, so no void can open above the button.
+    expect(css).toMatch(/\.live-content\s*\{[^}]*gap:\s*12px/)
+    expect(css).toMatch(/\.live-session\s*\{[^}]*display:\s*grid/)
+    expect(css).toMatch(/\.live-session\s*\{[^}]*border-radius:\s*22px/)
+    expect(portal).toContain('Live class')
     expect(read('src/lib/studentHub.ts')).toContain("'Live Class Session'")
   })
 })
