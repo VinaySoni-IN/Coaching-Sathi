@@ -24,18 +24,12 @@ teacher *Priya Sharma · Bright Minds Academy* — 21 students across **NEET Bio
 | **Student Hub Manager (teacher)** | **Student Portal (student)** |
 | <img src="docs/screenshots/05-hub.png" width="260" alt="Teacher view: per-student magic links at the end of the Hub — device linked, unused link, no link yet"> | <img src="docs/screenshots/06-student-hub.png" width="260" alt="Student view: live class countdown, upcoming class, alerts-on pill in the top bar, and notes"> |
 
-### Demo account
+### About the demo data
 
-The screenshots were taken with a real Supabase account made for this repository:
-
-| Email | Password |
-| --- | --- |
-| `demo@coachingsathi.app` | `CoachingSathi@2026` |
-
-Sign in with it on the deployed app, tick **Start with sample students** on the sign-up screen and you get
-a fully populated demo workspace on your own device. The account holds **no student rows** in Supabase —
-everything in the shots comes from that sample workspace, so nothing here pollutes a real centre's roster.
-Treat it as public: don't put real student data in it.
+The shots were taken with the app's own **sample workspace** — the *Start with sample students* checkbox
+on the sign-up screen (21 students across three batches, nine days of attendance, a month of fee
+receipts). It is generated on the device and never leaves it unless you upload a backup, so no demo
+roster exists in Supabase and no demo login is published here.
 
 ## Features
 

@@ -236,3 +236,30 @@ select p.proname,
 covered in the residual-risk note), and the three Student Hub alert RPCs
 `save_push_subscription`, `delete_push_subscription` and `my_push_state` — each keyed on the
 device token, none of them readable without it. `push_student_for_device` stays internal.
+
+## Incident: a demo login was published in the README
+
+**What happened.** A demo teacher account (`demo@…`, password in the same table) was created to capture
+the README screenshots and its credentials were written into `README.md`. That file is public, so from
+2026-11-27 until this entry the credentials were a working login to the deployed app.
+
+**Exposure.** That account owned **zero** rows — no students, no meetings, no notes, no folders, no push
+subscriptions — and RLS on every table is `auth.uid() = teacher_id`, so even a signed-in stranger could
+only ever see and edit rows they created under that account. The real teacher's roster was never
+reachable: `anon` holds no table grants at all, and `authenticated` sees only its own rows. The demo
+password could not be used to read, reset or impersonate any other account, and the account held no
+Storage objects.
+
+**Remediation.**
+1. The auth user was deleted (`delete from auth.users where id = …`), which cascades to `auth.identities`
+   and `public.profiles`. `auth.users`, `identities` and `profiles` are back to the single real teacher.
+2. The credentials table was removed from the README, replaced by a note that the sample workspace is
+   generated on the device by *Start with sample students* and never lives in Supabase.
+3. `SEC-12` in `tests/security.test.ts` now fails if any `README`/`docs/*.md` file contains a
+   `email | password` table row, a `password = …` line, or the retired demo address — so this cannot be
+   reintroduced by a later "just for screenshots" change.
+
+**Residual risk.** The old password still exists in git history, which is public. It is meaningless now:
+the account no longer exists, and there is no sign-up path that would recreate that identity with a
+chosen password. If a future demo is ever needed, generate it per-visitor on the device (the sample
+workspace) rather than publishing a shared login.
