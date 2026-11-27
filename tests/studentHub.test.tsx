@@ -630,7 +630,13 @@ describe('Student Portal and RLS (SP)', () => {
     expect(deny).toMatch(/create policy student_hub_notes_anon_no_delete/)
 
     expect(read('vite.config.ts')).toContain('copy-student-hub')
-    expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
+    // Pages actions must stay on the node24 generation: v3/v4 fail with "No artifacts named
+    // github-pages were found", which silently leaves the live site on an old build.
+    const pages = read('.github/workflows/pages.yml')
+    expect(pages).toContain('actions/configure-pages@v6')
+    expect(pages).toContain('actions/upload-pages-artifact@v5')
+    expect(pages).toContain('actions/deploy-pages@v5')
+    expect(pages).toContain('include-hidden-files: true')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
     expect(read('public/sw.js')).toContain('coachsathi-v28')
@@ -1189,7 +1195,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=17/)
+    expect(html).toMatch(/styles\.css\?v=18/)
     expect(html).toMatch(/portal\.js\?v=14/)
   })
 

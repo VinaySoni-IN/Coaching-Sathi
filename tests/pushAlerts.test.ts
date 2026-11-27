@@ -236,10 +236,17 @@ describe('Student Hub push alerts (PA)', () => {
     expect(rule).toMatch(/background: rgba\(255, 93, 115/)
     expect(rule).not.toMatch(/94, 242, 176/)
 
-    // No bell: the words alone carry the pill, so the markup inside the button has no svg.
+    // The icon is a bell with a slash through it — "notifications can be turned off" in one glyph.
     const button = html.slice(html.indexOf('<button id="alerts-pill"'), html.indexOf('</button>', html.indexOf('<button id="alerts-pill"')))
-    expect(button).not.toContain('<svg')
+    expect(button).toContain('<svg')
+    expect(button).toMatch(/<line x1="2" y1="2" x2="22" y2="22" \/>/) // the slash
+    expect(button).toContain('alerts-pill-icon')
+    expect(button).toMatch(/class="alerts-pill-icon" aria-hidden="true"/)
     expect(button).toContain('Turn off notifications')
+    // An icon-only bell would read as "notifications are on"; the word has to be there too.
+    expect(button).toContain('alerts-pill-label')
+    expect(rule).toMatch(/gap: 6px/)
+    expect(css).toContain('.alerts-pill-icon {')
     // display: grid on the card beats the UA [hidden] rule, so hiding it has to be explicit.
     expect(css).toContain('.alerts-card[hidden] { display: none; }')
     // hidden wins over the inline-flex display, or the closed pill would still paint.
