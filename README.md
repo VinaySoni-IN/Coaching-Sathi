@@ -10,6 +10,33 @@ teacher accounts; workspace data leaves the phone only when the teacher explicit
 or downloads a JSON backup file. The Student Hub's live meeting state and teacher-uploaded notes are
 separate, purpose-built Supabase tables with row-level security.
 
+## Screenshots
+
+Every shot below is the real app, captured at phone width (390 × 844 @2x) while signed in as the demo
+teacher *Priya Sharma · Bright Minds Academy* — 21 students across **NEET Biology**, **JEE Maths** and
+**Class 10 Science**.
+
+| Swipe attendance | All marked — ready to lock |
+| --- | --- |
+| <img src="docs/screenshots/01-attendance.png" width="260" alt="Attendance deck with batch chips and swipe actions"> | <img src="docs/screenshots/02-marked.png" width="260" alt="Day fully marked, 7 present and 1 absent, ready to lock"> |
+| **Fees ledger** | **Students** |
+| <img src="docs/screenshots/03-fees.png" width="260" alt="Monthly fees with collected percentage, WhatsApp reminders and per-student invoice actions"> | <img src="docs/screenshots/04-students.png" width="260" alt="Student list with batch filter, search and WhatsApp actions"> |
+| **Student Hub Manager (teacher)** | **Student Portal (student)** |
+| <img src="docs/screenshots/05-hub.png" width="260" alt="Teacher view: device-linked students, unused links, live badge"> | <img src="docs/screenshots/06-student-hub.png" width="260" alt="Student view: live class countdown, upcoming class, alert opt-in and notes"> |
+
+### Demo account
+
+The screenshots were taken with a real Supabase account made for this repository:
+
+| Email | Password |
+| --- | --- |
+| `demo@coachingsathi.app` | `CoachingSathi@2026` |
+
+Sign in with it on the deployed app, tick **Start with sample students** on the sign-up screen and you get
+a fully populated demo workspace on your own device. The account holds **no student rows** in Supabase —
+everything in the shots comes from that sample workspace, so nothing here pollutes a real centre's roster.
+Treat it as public: don't put real student data in it.
+
 ## Features
 
 - **Swipe attendance** — swipe a student card left for **present**, right for **absent**
@@ -55,7 +82,7 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Vite dev server (binds to all interfaces, accepts proxied preview hosts) |
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build |
-| `npm test` | Vitest suite (happy-dom), 344 tests across 24 files |
+| `npm test` | Vitest suite (happy-dom), 391 tests across 26 files |
 | `npm run lint` | ESLint (0 errors; React Compiler advisories surface as warnings) |
 
 ## Project layout
