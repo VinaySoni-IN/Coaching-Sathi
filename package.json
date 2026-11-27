@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.119.0",
+    "@supabase/supabase-js": "^2.119.2",
     "@tailwindcss/vite": "^4.2.1",
     "framer-motion": "^12.35.0",
     "html-to-image": "^1.11.13",
