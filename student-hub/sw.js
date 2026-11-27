@@ -11,6 +11,9 @@
 'use strict'
 
 const ICON = '../student-icon-192-v15.png'
+// Android draws the left-hand status-bar icon as a silhouette: it must be white on transparent,
+// otherwise the coloured tile collapses into a plain square.
+const BADGE = '../student-notify-badge-96-v1.png'
 const HOME = './'
 
 /** Server text is untrusted: never let it carry control characters into the notification. */
@@ -61,7 +64,8 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(title, {
       body,
       icon: ICON,
-      badge: ICON,
+      badge: BADGE,
+      vibrate: [90, 60, 90],
       tag,
       renotify: true,
       data: { url },

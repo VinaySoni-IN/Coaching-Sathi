@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8')
+const readBuffer = (p: string) => readFileSync(resolve(process.cwd(), p))
 
 const MIGRATION = 'supabase/migrations/20261127090000_student_hub_push_alerts.sql'
 const FN = 'supabase/functions/notify-students/index.ts'
@@ -171,6 +172,25 @@ describe('Student Hub push alerts (PA)', () => {
     expect(sources.every((src: string) => src.includes('student-icon'))).toBe(true)
     // The teacher app's install identity is untouched by this.
     expect(JSON.parse(read('public/manifest.webmanifest')).id).toBe('./')
+  })
+
+  it('PA-12 the status-bar icon is a white silhouette on transparent, not the coloured tile', () => {
+    // Android paints `badge` as a monochrome mask: a colour PNG collapses to a solid square there.
+    for (const name of ['student-notify-badge-96-v1.png', 'student-notify-badge-192-v1.png']) {
+      const buf = readBuffer(`public/${name}`)
+      expect(buf.subarray(1, 4).toString(), name).toBe('PNG')
+      // IHDR: bit depth at 24, colour type at 25 — 6 means truecolour with alpha.
+      expect(buf[25], `${name} must carry alpha`).toBe(6)
+    }
+
+    const sw = read(SW)
+    expect(sw).toContain("const BADGE = '../student-notify-badge-96-v1.png'")
+    expect(sw).toContain('badge: BADGE')
+    // The body of the notification still shows the real icon.
+    expect(sw).toContain("const ICON = '../student-icon-192-v15.png'")
+    expect(sw).toContain('icon: ICON')
+    // Files are pre-cached so a notification raised offline still has its artwork.
+    expect(read('public/sw.js')).toContain("'./student-notify-badge-96-v1.png'")
   })
 
   it('PA-10 the alerts card exists in the portal and is left-aligned like the rest of the page', () => {
