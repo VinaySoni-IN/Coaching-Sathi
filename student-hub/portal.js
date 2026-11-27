@@ -371,8 +371,10 @@ async function enterHub() {
    ------------------------------------------------------------------------------------------ */
 const ALERTS_COPY = {
   unsupported: "This browser can't show alerts. Open Student Hub in Chrome or Safari to turn them on.",
+  oldIos: 'iPhone alerts need iOS 16.4 or newer. Update iOS, then add Student Hub to your Home Screen and open it from that icon.',
   install: 'To get alerts on iPhone, add Student Hub to your Home Screen (tap Share, then Add to Home Screen), then open it from that icon.',
   blocked: "Alerts are blocked for this site. Allow notifications for this page in your browser's site settings, then reload.",
+  blockedIos: 'Alerts are turned off for Student Hub. Open Settings → Notifications → Student Hub on this iPhone, allow notifications, then reopen it from your Home Screen.',
   error: 'Alerts could not start on this phone. Tap try again — if it keeps failing, reload the page.',
 }
 
@@ -390,6 +392,13 @@ function isIosDevice() {
     || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
 }
 
+/** iOS 16.4 is the first version with Web Push at all — below that no install will ever help. */
+function iosTooOld() {
+  const match = /OS (\d+)[_.](\d+)/.exec(navigator.userAgent || '')
+  if (!match) return false
+  return Number(match[1]) < 16 || (Number(match[1]) === 16 && Number(match[2]) < 4)
+}
+
 function isInstalled() {
   try {
     return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
@@ -403,12 +412,24 @@ function pushSupported() {
     && 'PushManager' in window && 'Notification' in window
 }
 
+/**
+ * What to say when this browser exposes no push API at all. On iPhone that is either "you are in a
+ * Safari tab, add it to the Home Screen" or, below iOS 16.4, "no install will help".
+ */
+function noPushState() {
+  if (!isIosDevice()) return 'unsupported'
+  if (iosTooOld() || isInstalled()) return 'unsupported'
+  return 'install'
+}
+
 function alertsCopy(stateName) {
   const batch = state.batch ? ` for ${state.batch}` : ''
   if (stateName === 'on') return `Alerts are on${batch}. This phone buzzes when your class goes live or a new note lands — only for your batch.`
-  if (stateName === 'unsupported') return ALERTS_COPY.unsupported
+  // The iPhone paths are different enough to deserve their own sentences: alerts only exist inside
+  // a Home Screen app, and "site settings" lives in the iOS Settings app, not the browser.
+  if (stateName === 'unsupported') return isIosDevice() && iosTooOld() ? ALERTS_COPY.oldIos : ALERTS_COPY.unsupported
   if (stateName === 'install') return ALERTS_COPY.install
-  if (stateName === 'blocked') return ALERTS_COPY.blocked
+  if (stateName === 'blocked') return isIosDevice() ? ALERTS_COPY.blockedIos : ALERTS_COPY.blocked
   if (stateName === 'error') return ALERTS_COPY.error
   return `Get a notification on this phone when ${state.teacherName || 'your teacher'} goes live or shares a new note. Only your batch.`
 }
@@ -460,7 +481,7 @@ async function renderAlerts() {
   }
 
   if (!pushSupported()) {
-    paintAlerts(isIosDevice() && !isInstalled() ? 'install' : 'unsupported')
+    paintAlerts(noPushState())
     return
   }
   if (Notification.permission === 'denied') {
@@ -520,6 +541,13 @@ async function saveSubscription(subscription) {
 async function turnAlertsOn() {
   const key = cleanLine(state.config.vapid, 300)
   if (!key) throw new Error('Alerts are not set up on this site yet. Ask your teacher to update Student Hub.')
+
+  // Belt and braces for iPhone: some iOS builds expose PushManager inside Safari, where subscribe()
+  // can only fail. Say "add to Home Screen" instead of letting the tap die in a catch.
+  if (isIosDevice() && !isInstalled()) {
+    paintAlerts('install')
+    throw new Error(ALERTS_COPY.install)
+  }
 
   // The browser prompt only ever appears from this tap.
   const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission()

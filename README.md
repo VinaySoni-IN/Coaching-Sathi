@@ -297,6 +297,18 @@ the Teacher/Student JS changes, separated into three sections.
   best-effort invalidation channel; the authoritative 15-second/visibility poll always uses the scoped
   REST headers.
 
+### Class & note alerts (per phone)
+
+- **Android / Chrome** — tap **Turn on alerts**: the browser asks once, then the card collapses to a
+  single **Turn off** pill in the top bar.
+- **iPhone** — Apple only delivers web push to a **Home Screen app on iOS 16.4 or newer**. Open the Hub
+  in Safari → **Share → Add to Home Screen**, then open it from that icon and tap **Turn on alerts**.
+  A Safari tab cannot show alerts at all, so the card explains the Home Screen step instead of offering
+  a button; below iOS 16.4 it says the phone needs an update first. If notifications get switched off
+  later, the card points at **Settings → Notifications → Student Hub**.
+- Alerts are opt-in per device and batch-scoped: the fan-out only targets subscriptions whose student
+  row is in the batch that changed, so no student is ever told about another batch's class or note.
+
 ## Deploying to GitHub Pages
 
 `.github/workflows/pages.yml` builds on pushes to `main`, uploads `dist/`, and deploys with
