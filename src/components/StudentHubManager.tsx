@@ -889,85 +889,6 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
         })}
       </div>
 
-      {/* ------------------------------------------------------------------ who this batch is
-          One link per student, single use. A student opens it once on their own phone; from then on
-          the device is remembered and every row below says so. Tapping a row opens the Activity
-          drawer: when they were last here, and what they opened. */}
-      <section aria-label={`Students in ${effectiveBatch}`} className="relative z-10 rounded-2xl border border-white/8 bg-white/[.03] px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-white/45">
-            <Users size={13} className="shrink-0" />
-            <span className="truncate">Students in {effectiveBatch}</span>
-          </p>
-          <span
-            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${linkedCount ? 'bg-present/12 text-present ring-present/28' : 'bg-white/6 text-white/55 ring-white/10'}`}
-            aria-label={`${linkedCount} of ${batchStudents.length} devices linked`}
-          >
-            {linkedCount}/{batchStudents.length} linked
-          </span>
-        </div>
-        {batchStudents.length ? (
-          <>
-            <ul className="mt-2.5 space-y-1.5">
-              {batchStudents.map((student) => {
-                const row = rowFor(student.name)
-                const state = linkStateOf(row)
-                const linked = state === 'device_linked'
-                const pendingLink = state === 'active_link'
-                const working = Boolean(row) && busyStudent === row?.student_id
-                return (
-                  <li
-                    key={student.id}
-                    className={`flex min-h-[56px] items-center gap-2.5 rounded-xl px-3 py-2 ring-1 ${linked ? 'bg-present/8 ring-present/22' : pendingLink ? 'bg-amber-400/8 ring-amber-300/25' : 'bg-white/4 ring-white/8'}`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => openActivity(student)}
-                      aria-label={`Open activity for ${student.name}`}
-                      className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span className={`truncate text-[12.5px] font-semibold ${linked ? 'text-white' : 'text-white/75'}`}>{student.name}</span>
-                        {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/30">#{student.roll}</span> : null}
-                      </span>
-                      <span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] ${linked ? 'text-present' : pendingLink ? 'text-amber-200' : 'text-white/35'}`}>
-                        {linked ? 'Device linked ✓' : pendingLink ? 'Active unused link' : 'No link yet'}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[10.5px] text-white/35">
-                        {row
-                          ? `${lastSeenLabel(row.last_seen_at, now)}${isAccessPaused(row.access_status) ? ' · Paused' : ''}`
-                          : 'Publishing…'}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={working || !row}
-                      aria-label={linked
-                        ? `Reset and generate a new link for ${student.name}`
-                        : pendingLink ? `Copy link for ${student.name}` : `Generate magic link for ${student.name}`}
-                      onClick={() => { if (pendingLink) copyExistingLink(student); else copyLinkFor(student) }}
-                      className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold disabled:opacity-40 ${linked || pendingLink ? 'bg-white/8 text-white/70 hover:text-white' : 'lens glass-btn text-white'}`}
-                    >
-                      {working ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
-                      {linked ? 'New link' : pendingLink ? 'Copy link' : 'Generate link'}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-            <p className="mt-2 text-[11px] leading-snug text-white/35">
-              {rosterReady
-                ? 'Tap a student to see when they were last here. A link works once — after that the phone stays signed in until you send a new one.'
-                : 'Publishing this roster…'}
-            </p>
-          </>
-        ) : (
-          <p className="mt-1.5 text-[12px] leading-snug text-white/40">
-            No students in this batch yet. Add them on the Students tab — a link can only be made for a real student.
-          </p>
-        )}
-      </section>
-
       {(status || error) && (
         <div className={`relative z-10 flex items-start gap-2 rounded-2xl px-3.5 py-2.5 text-[12.5px] ${error ? 'bg-absent/10 text-red-100 ring-1 ring-absent/25' : 'bg-present/10 text-present ring-1 ring-present/20'}`} role={error ? 'alert' : 'status'}>
           {error ? <AlertCircle size={15} className="mt-0.5 shrink-0" /> : <Check size={15} className="mt-0.5 shrink-0" />}
@@ -1420,6 +1341,85 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
           <Users size={11} className="shrink-0" /> Students open notes at
           <code className="truncate rounded bg-black/40 px-1.5 py-0.5">{`${studentHubUrl()}?note=<id>`}</code>
         </p>
+      </section>
+
+      {/* ------------------------------------------------------------------ who this batch is
+          One link per student, single use. A student opens it once on their own phone; from then on
+          the device is remembered and every row below says so. Tapping a row opens the Activity
+          drawer: when they were last here, and what they opened. */}
+      <section aria-label={`Students in ${effectiveBatch}`} className="relative z-10 rounded-2xl border border-white/8 bg-white/[.03] px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-white/45">
+            <Users size={13} className="shrink-0" />
+            <span className="truncate">Students in {effectiveBatch}</span>
+          </p>
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${linkedCount ? 'bg-present/12 text-present ring-present/28' : 'bg-white/6 text-white/55 ring-white/10'}`}
+            aria-label={`${linkedCount} of ${batchStudents.length} devices linked`}
+          >
+            {linkedCount}/{batchStudents.length} linked
+          </span>
+        </div>
+        {batchStudents.length ? (
+          <>
+            <ul className="mt-2.5 space-y-1.5">
+              {batchStudents.map((student) => {
+                const row = rowFor(student.name)
+                const state = linkStateOf(row)
+                const linked = state === 'device_linked'
+                const pendingLink = state === 'active_link'
+                const working = Boolean(row) && busyStudent === row?.student_id
+                return (
+                  <li
+                    key={student.id}
+                    className={`flex min-h-[56px] items-center gap-2.5 rounded-xl px-3 py-2 ring-1 ${linked ? 'bg-present/8 ring-present/22' : pendingLink ? 'bg-amber-400/8 ring-amber-300/25' : 'bg-white/4 ring-white/8'}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openActivity(student)}
+                      aria-label={`Open activity for ${student.name}`}
+                      className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span className={`truncate text-[12.5px] font-semibold ${linked ? 'text-white' : 'text-white/75'}`}>{student.name}</span>
+                        {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/30">#{student.roll}</span> : null}
+                      </span>
+                      <span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] ${linked ? 'text-present' : pendingLink ? 'text-amber-200' : 'text-white/35'}`}>
+                        {linked ? 'Device linked ✓' : pendingLink ? 'Active unused link' : 'No link yet'}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10.5px] text-white/35">
+                        {row
+                          ? `${lastSeenLabel(row.last_seen_at, now)}${isAccessPaused(row.access_status) ? ' · Paused' : ''}`
+                          : 'Publishing…'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={working || !row}
+                      aria-label={linked
+                        ? `Reset and generate a new link for ${student.name}`
+                        : pendingLink ? `Copy link for ${student.name}` : `Generate magic link for ${student.name}`}
+                      onClick={() => { if (pendingLink) copyExistingLink(student); else copyLinkFor(student) }}
+                      className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold disabled:opacity-40 ${linked || pendingLink ? 'bg-white/8 text-white/70 hover:text-white' : 'lens glass-btn text-white'}`}
+                    >
+                      {working ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
+                      {linked ? 'New link' : pendingLink ? 'Copy link' : 'Generate link'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="mt-2 text-[11px] leading-snug text-white/35">
+              {rosterReady
+                ? 'Tap a student to see when they were last here. A link works once — after that the phone stays signed in until you send a new one.'
+                : 'Publishing this roster…'}
+            </p>
+          </>
+        ) : (
+          <p className="mt-1.5 text-[12px] leading-snug text-white/40">
+            No students in this batch yet. Add them on the Students tab — a link can only be made for a real student.
+          </p>
+        )}
       </section>
 
       {/* Activity drawer. Rendered into <body> on purpose: the Hub section is a framer-motion element,

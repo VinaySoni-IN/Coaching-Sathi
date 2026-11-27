@@ -633,7 +633,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v27')
+    expect(read('public/sw.js')).toContain('coachsathi-v28')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
@@ -1189,8 +1189,8 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=14/)
-    expect(html).toMatch(/portal\.js\?v=12/)
+    expect(html).toMatch(/styles\.css\?v=15/)
+    expect(html).toMatch(/portal\.js\?v=13/)
   })
 
   it('SP-11 the locked card is all left-aligned and reads as a blocked state, not a neutral card', () => {
@@ -1249,5 +1249,18 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).toMatch(/\.live-session\s*\{[^}]*border-radius:\s*22px/)
     expect(portal).toContain('Live class')
     expect(read('src/lib/studentHub.ts')).toContain("'Live Class Session'")
+  })
+
+  it('SH-21 the link roster sits after the class and material tools, not in front of them', () => {
+    const manager = read('src/components/StudentHubManager.tsx')
+    const roster = manager.indexOf('Students in ${effectiveBatch}')
+    expect(roster).toBeGreaterThan(-1)
+    for (const id of ['hub-composer', 'hub-meetings', 'hub-share', 'hub-material']) {
+      expect(manager.indexOf(id), id).toBeGreaterThan(-1)
+      expect(manager.indexOf(id), id).toBeLessThan(roster)
+    }
+    // The Activity drawer still opens from the roster rows and still portals above the bottom nav.
+    expect(manager).toContain('createPortal')
+    expect(manager).toContain('z-[60]')
   })
 })

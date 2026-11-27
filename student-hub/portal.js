@@ -44,6 +44,7 @@ const els = {
   alertsCard: document.getElementById('alerts-card'),
   alertsText: document.getElementById('alerts-text'),
   alertsBtn: document.getElementById('alerts-btn'),
+  alertsPill: document.getElementById('alerts-pill'),
 }
 
 const state = {
@@ -415,7 +416,10 @@ function alertsCopy(stateName) {
 function paintAlerts(stateName, buttonLabel) {
   state.alerts = stateName
   if (!els.alertsCard) return
-  els.alertsCard.hidden = !state.session
+  // Alerts already on: the card has nothing left to say, so it steps aside for one small pill.
+  const isOn = stateName === 'on'
+  els.alertsCard.hidden = !state.session || isOn
+  if (els.alertsPill) els.alertsPill.hidden = !state.session || !isOn
   els.alertsCard.classList.toggle('is-on', stateName === 'on')
   els.alertsCard.classList.toggle('is-blocked', stateName === 'blocked' || stateName === 'unsupported')
   if (els.alertsText) els.alertsText.textContent = alertsCopy(stateName)
@@ -451,6 +455,7 @@ async function renderAlerts() {
   if (!els.alertsCard) return
   if (!state.session) {
     els.alertsCard.hidden = true
+    if (els.alertsPill) els.alertsPill.hidden = true
     return
   }
 
@@ -559,6 +564,7 @@ async function turnAlertsOff() {
 async function toggleAlerts() {
   if (!state.session || !els.alertsBtn || els.alertsBtn.disabled) return
   els.alertsBtn.disabled = true
+  if (els.alertsPill) els.alertsPill.disabled = true
   try {
     if (state.alerts === 'on') await turnAlertsOff()
     else await turnAlertsOn()
@@ -568,6 +574,7 @@ async function toggleAlerts() {
     showToast(message)
   } finally {
     els.alertsBtn.disabled = false
+    if (els.alertsPill) els.alertsPill.disabled = false
     if (state.alerts !== 'blocked') await renderAlerts()
   }
 }
@@ -878,8 +885,9 @@ function noteCard(note) {
   if (folder) top.append(elem('span', 'folder-pill', folder))
   else top.append(elem('span', 'folder-pill', UNFILED_FOLDER))
   const date = formatDate(note.created_at)
-  if (date) top.append(elem('span', 'note-date', date))
   card.append(top, elem('h3', 'note-title', cleanLine(note.title, 160) || 'Untitled note'))
+  // When it was shared belongs under the title it describes, not floating at the end of the pill row.
+  if (date) card.append(elem('p', 'note-date', date))
 
   const actions = elem('div', 'note-actions')
   // One report per note per visit; the database also folds repeats inside five minutes.
@@ -1097,6 +1105,7 @@ function subscribe() {
 
 function bindControls() {
   if (els.alertsBtn) els.alertsBtn.addEventListener('click', () => { void toggleAlerts() })
+  if (els.alertsPill) els.alertsPill.addEventListener('click', () => { void toggleAlerts() })
   els.search.addEventListener('input', () => { state.query = els.search.value; renderNotes() })
   els.subjectFilter.addEventListener('change', () => { state.subject = els.subjectFilter.value; renderNotes() })
   els.kindFilter.addEventListener('change', () => { state.kind = els.kindFilter.value; renderNotes() })

@@ -222,6 +222,9 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   display: grid;
   gap: 14px;
 }
+/* .alerts-card sets display: grid, which would beat the UA [hidden] rule — the one state that hides
+   the card has to win outright, or "on" shows the card *and* the pill. */
+.alerts-card[hidden] { display: none; }
 .alerts-head { display: flex; align-items: flex-start; gap: 12px; }
 .alerts-icon {
   display: grid;
@@ -266,6 +269,28 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 }
 .alerts-btn[hidden] { display: none; }
 .alerts-btn:disabled { opacity: .55; }
+
+/* Alerts already on: the card is replaced by one quiet pill, so the page has no standing banner
+   repeating itself. The pill is the whole state — tap it to turn alerts off again. */
+.alerts-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  padding: 7px 13px 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 242, 176, .24);
+  background: rgba(94, 242, 176, .10);
+  color: #c9ffe6;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.alerts-pill-icon { display: inline-flex; color: var(--present); }
+.alerts-pill:active { transform: scale(.99); }
+.alerts-pill[hidden] { display: none; }
+.alerts-pill:disabled { opacity: .55; }
 
 .materials { margin-top: 30px; }
 .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
@@ -335,6 +360,16 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .kind-pill.link { color: #ffe1bd; border-color: rgba(255,190,110,.24); background: rgba(255,190,110,.10); }
 .kind-pill.text { color: #e6d8ff; border-color: rgba(190,150,255,.24); background: rgba(190,150,255,.10); }
 .note-date { margin-left: auto; color: var(--faint); }
+/* Under the title: the pill row above is about what the note is, the line under it is when. */
+.note-card > .note-date {
+  display: block;
+  margin: 5px 0 0;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  text-align: left;
+}
 .note-detail { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .note-body {
   max-height: 180px;
