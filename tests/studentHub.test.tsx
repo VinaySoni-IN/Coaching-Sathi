@@ -633,7 +633,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v25')
+    expect(read('public/sw.js')).toContain('coachsathi-v26')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 

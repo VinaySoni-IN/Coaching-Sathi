@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { CloudUpload, Eye, EyeOff, Loader2, LogIn, ShieldCheck, UserPlus } from 'lucide-react'
-import logo from '../assets/logo-v14.png'
+import logo from '../assets/logo-v15.png'
 import { requestPasswordReset, signIn, signUp } from '../lib/auth'
 import type { Teacher } from '../lib/auth'
 import { seedJson } from '../lib/store'
