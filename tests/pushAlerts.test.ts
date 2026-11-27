@@ -235,6 +235,39 @@ describe('Student Hub push alerts (PA)', () => {
     expect(css).toContain('.alerts-pill[hidden] { display: none; }')
   })
 
+  it('PA-15 iPhone gets its own sentences, because iOS only delivers push to a Home Screen app', () => {
+    const js = read(PORTAL)
+
+    // 16.4 is when Web Push arrived on iOS; older iPhones never see a working button.
+    expect(js).toContain('function iosTooOld()')
+    expect(js).toMatch(/Number\(match\[1\]\) < 16 \|\| \(Number\(match\[1\]\) === 16 && Number\(match\[2\]\) < 4\)/)
+    expect(js).toContain('oldIos:')
+    expect(js).toContain('iPhone alerts need iOS 16.4 or newer')
+
+    // A Home Screen app is the only place Safari exposes push — say so, don't say "browser".
+    expect(js).toContain('install:')
+    expect(js).toContain('add Student Hub to your Home Screen')
+    expect(js).toContain('blockedIos:')
+    expect(js).toContain('Settings → Notifications → Student Hub')
+
+    // The install state wins over "unsupported" on iPhone, and the copy follows the device.
+    // One decision point: iPhone tab -> install, iOS < 16.4 -> unsupported (no install can help).
+    expect(js).toContain('function noPushState()')
+    expect(js).toContain("if (iosTooOld() || isInstalled()) return 'unsupported'")
+    expect(js).toContain('paintAlerts(noPushState())')
+    expect(js).toContain("if (stateName === 'blocked') return isIosDevice() ? ALERTS_COPY.blockedIos : ALERTS_COPY.blocked")
+  })
+
+  it('PA-16 a tap on an iPhone tab never dies in a catch — it says "add to Home Screen"', () => {
+    const js = read(PORTAL)
+    const guard = js.indexOf('if (isIosDevice() && !isInstalled()) {')
+    const request = js.indexOf('const permission = Notification.permission')
+    expect(guard).toBeGreaterThan(-1)
+    // The guard runs before any permission prompt or subscribe() call.
+    expect(guard).toBeLessThan(request)
+    expect(js).toContain("paintAlerts('install')")
+  })
+
   it('PA-14 a note shows when it was shared under its title, not at the end of the pill row', () => {
     const js = read(PORTAL)
     const title = js.indexOf("card.append(top, elem('h3', 'note-title'")
