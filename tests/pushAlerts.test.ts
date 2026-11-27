@@ -160,7 +160,7 @@ describe('Student Hub push alerts (PA)', () => {
 
   it('PA-11 the portal is installable, because an iPhone only delivers alerts to a Home Screen app', () => {
     const html = read('student-hub/index.html')
-    expect(html).toContain('href="./manifest.webmanifest?v=1"')
+    expect(html).toContain('href="./manifest.webmanifest?v=2"')
     const m = JSON.parse(read('student-hub/manifest.webmanifest'))
     expect(m.id).toBe('./')
     expect(m.start_url).toBe('./')

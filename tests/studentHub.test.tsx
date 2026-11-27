@@ -639,7 +639,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(pages).toContain('include-hidden-files: true')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v28')
+    expect(read('public/sw.js')).toContain('coachsathi-v29')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 

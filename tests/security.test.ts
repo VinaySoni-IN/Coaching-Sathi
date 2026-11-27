@@ -158,8 +158,14 @@ describe('Security checklist that the code can enforce (SEC)', () => {
   it('SEC-12 no working login is published in the docs', () => {
     // A README is a public page. A demo account there is a live door into the product, whatever its
     // row count, so credentials must never come back: not as a table, not as a "user / pass" line.
+    // Any markdown a visitor can read on GitHub counts, not just README and docs/: contribution
+    // guides and issue templates are public pages too.
     const docs = [
       'README.md',
+      'CONTRIBUTING.md',
+      'CODE_OF_CONDUCT.md',
+      'SECURITY.md',
+      '.github/PULL_REQUEST_TEMPLATE.md',
       ...readdirSync('docs')
         .filter((name) => name.endsWith('.md'))
         .map((name) => `docs/${name}`),

@@ -1,0 +1,41 @@
+---
+name: Feature request
+description: Suggest something a coaching centre actually needs on their phone.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This app is deliberately narrow: attendance, fees, students, WhatsApp messages, reports and the
+        Student Hub. Requests that keep it local-first and phone-first are much more likely to land.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem a teacher has today
+      description: Describe the real situation, not the solution. "I have to write the fee reminder twice" beats "add a button".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like the app to do
+    validations:
+      required: true
+  - type: dropdown
+    id: tradeoff
+    attributes:
+      label: Does this need a server or a background sync?
+      options:
+        - "No — it can work on the device alone"
+        - "Yes — it needs the cloud (explain why below)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Screenshots of other apps, edge cases, how often this happens.
+    validations:
+      required: false

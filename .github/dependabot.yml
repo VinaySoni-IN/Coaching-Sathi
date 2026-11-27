@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # npm dependencies are pinned by package-lock.json and installed with `npm ci` in CI.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Framework and tooling move together; one PR a week is easier to review than eight.
+      tooling:
+        patterns:
+          - "vite*"
+          - "@vitejs/*"
+          - "eslint*"
+          - "@eslint/*"
+          - "typescript*"
+          - "vitest*"
+          - "@vitest/*"
+
+  # The Pages workflow pins major versions; keep those fresh so a deprecated Node runtime
+  # in an action never lands mid-deploy again (see #53 and #55).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
