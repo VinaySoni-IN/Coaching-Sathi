@@ -209,6 +209,11 @@ describe('Student Hub push alerts (PA)', () => {
     expect(html).toContain('id="alerts-pill"')
     expect(html).toContain('Turn off notifications')
     expect(html).toMatch(/id="alerts-pill"[^>]* hidden/)
+    // It lives in the top bar beside the student's name, not in the page flow under the classes card.
+    const pill = html.indexOf('id="alerts-pill"')
+    expect(pill).toBeGreaterThan(html.indexOf('id="topbar"'))
+    expect(pill).toBeLessThan(html.indexOf('</header>'))
+    expect(html.slice(html.indexOf('</header>'))).not.toContain('id="alerts-pill"')
 
     const js = read(PORTAL)
     // "on" is the only state that replaces the card: every other state still explains itself.
@@ -221,6 +226,9 @@ describe('Student Hub push alerts (PA)', () => {
 
     const css = read('student-hub/styles.css')
     expect(css).toContain('.alerts-pill {')
+    // Top-bar sizing: it must not wrap onto a second line or be pushed off a 360px screen.
+    expect(css).toMatch(/\.alerts-pill \{[^}]*flex: 0 0 auto/)
+    expect(css).toMatch(/\.alerts-pill \{[^}]*white-space: nowrap/)
     // display: grid on the card beats the UA [hidden] rule, so hiding it has to be explicit.
     expect(css).toContain('.alerts-card[hidden] { display: none; }')
     // hidden wins over the inline-flex display, or the closed pill would still paint.
