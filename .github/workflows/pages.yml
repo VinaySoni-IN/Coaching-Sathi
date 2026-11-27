@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -39,5 +40,25 @@ jobs:
           path: ./dist
           # dist/.nojekyll is a dotfile; Pages must ship it or the underscore-prefixed assets 404.
           include-hidden-files: true
+      # deploy-pages looks the artifact up the moment it starts, and the artifact API sometimes lags
+      # behind a green upload — the deploy then dies with "No artifacts named github-pages were found"
+      # even though the artifact is listed a minute later (run 46056408499 is exactly that). A blind
+      # sleep is not reliable, so wait until the API actually lists it, and fail loudly if it never does.
+      - name: Wait for the github-pages artifact to be visible
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for attempt in $(seq 1 36); do
+            count=$(gh api "repos/$GH_REPO/actions/runs/${{ github.run_id }}/artifacts" \
+              --jq '[.artifacts[] | select(.name == "github-pages" and .expired == false)] | length' 2>/dev/null || echo 0)
+            if [ "${count:-0}" -ge 1 ]; then
+              echo "github-pages artifact is visible (attempt $attempt, ~$((attempt * 5))s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The github-pages artifact never became visible to the API in 3 minutes."
+          exit 1
       - id: deployment
         uses: actions/deploy-pages@v5
