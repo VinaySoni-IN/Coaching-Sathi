@@ -639,7 +639,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(pages).toContain('include-hidden-files: true')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v29')
+    expect(read('public/sw.js')).toContain('coachsathi-v30')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
@@ -1199,7 +1199,7 @@ describe('Student Portal and RLS (SP)', () => {
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
     expect(html).toMatch(/styles\.css\?v=19/)
-    expect(html).toMatch(/portal\.js\?v=15/)
+    expect(html).toMatch(/portal\.js\?v=16/)
   })
 
   it('SP-11 the locked card is all left-aligned and reads as a blocked state, not a neutral card', () => {

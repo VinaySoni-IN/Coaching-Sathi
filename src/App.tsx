@@ -21,6 +21,7 @@ import MessageSheet from './components/MessageSheet'
 import { PRESENT_TEMPLATES, fill, waLink } from './lib/wa'
 import { RatesContext } from './lib/ratesContext'
 import { attendanceRates, NO_RATE } from './lib/attendance'
+import { readLaunchAction } from './lib/launch'
 import { useEverTrue } from './lib/useEverTrue'
 
 // Heavy, rarely-used sheets load on demand (and are pre-loaded quietly once the app is idle), so the first screen is fast.
@@ -136,6 +137,26 @@ function Workspace({ teacher, onTeacher, onSignOut }: { teacher: Teacher; onTeac
     toastTimer.current = setTimeout(() => setToast(null), 2200)
   }, [])
   useEffect(() => () => clearTimeout(toastTimer.current), [])
+  // Home-screen shortcuts, `web+coachingsathi:` links, an opened .json backup and the share sheet all
+  // arrive here, after the workspace exists, so each one can land on a real screen instead of a blank start.
+  useEffect(() => {
+    let alive = true
+    void readLaunchAction().then((action) => {
+      if (!alive || action.kind === 'none') return
+      if (action.kind === 'page') { setPage(action.page); return }
+      if (action.kind === 'backup') { openBackup(); return }
+      if (action.kind === 'invalid-file') { setBackupError('That file is not a valid Coaching Sathi backup'); setBackupOpen(true); return }
+      if (action.kind === 'restore') { restore(action.backup); return }
+      if (action.kind !== 'share') return
+      const first = state.batches[0]
+      if (!first) { say('Set up a batch first, then share a contact into it'); return }
+      if (!action.phone && !action.name) { say('That share had no name or phone number to add'); return }
+      setStudentTarget({ batchId: first.id, student: null, draft: { name: action.name, phone: action.phone } })
+    })
+    return () => { alive = false }
+    // Runs once per workspace mount: the launch note is already consumed by then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const runUpload = async () => {
     if (backupBusy) return

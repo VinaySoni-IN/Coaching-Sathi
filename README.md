@@ -71,6 +71,11 @@ Supabase, and **no demo login is published here** — creating an account takes 
   assets, anonymous SELECT-only client.
 - **Installable PWA** — standalone display, transparent-corner app icons at every size, maskable icon,
   Apple touch icons, an offline-first service worker and install screenshots (`public/`, `sw.js`).
+  The install surfaces are wired, not decorative: **shortcuts** open Attendance / Fees / Students / Hub,
+  a `web+coachingsathi:` link does the same, opening a `.json` backup with the app goes straight to the
+  restore confirmation, and the Android **share sheet** fills "Add student" from a shared contact.
+  Every manifest member, including the four we deliberately leave out, is explained in
+  [`docs/pwa.md`](docs/pwa.md) and pinned by `tests/pwa.test.ts`.
 
 ## Getting started
 
@@ -137,13 +142,14 @@ src/
     auth.ts          Supabase teacher accounts and sessions
     cloud.ts         lazy Supabase client + friendly error messages
     cloudBackup.ts   explicit snapshot upload / fetch / local overwrite
+    launch.ts        home-screen shortcuts, protocol links, opened backups, share sheet
     money.ts, phone.ts, email.ts, backup.ts, photo.ts, …
 public/              manifest, app icons + favicon, install screenshots, service worker
 student-hub/         standalone Student Portal: index.html, styles.css, portal.js, sanitize.js,
                      config.json, vendor/supabase.js
 supabase/            SQL migrations: tables, the notes view, storage policies, RLS
 tests/               Vitest suites (unit + component + E2E-style flows)
-docs/                screenshots, security audit, Student Hub batch update notes
+docs/                screenshots, security audit, manifest audit notes (pwa.md), Student Hub notes
 ```
 
 ## Notes

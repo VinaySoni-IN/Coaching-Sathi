@@ -163,8 +163,8 @@ describe('Installable PWA (PWA)', () => {
   })
 
   it('PWA-05 both pages bust the manifest cache when the manifest changes', () => {
-    expect(read('index.html')).toContain('manifest.webmanifest?v=16')
-    expect(read('student-hub/index.html')).toContain('manifest.webmanifest?v=2')
+    expect(read('index.html')).toContain('manifest.webmanifest?v=17')
+    expect(read('student-hub/index.html')).toContain('manifest.webmanifest?v=3')
   })
 })
 

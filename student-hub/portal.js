@@ -60,6 +60,8 @@ const state = {
   meeting: null,
   meetings: [],
   deepLinkNote: '',
+  /** A home-screen shortcut (?go=live|notes|alerts): scrolled to once the hub has rendered. */
+  launchTarget: '',
   folders: [],
   notes: [],
   query: '',
@@ -401,6 +403,7 @@ async function enterHub() {
   state.loadedOnce = false
   await loadAll()
   await checkDeepLink()
+  applyLaunchTarget()
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -930,6 +933,24 @@ function scrollToDeepLink() {
   target.classList.add('is-flash')
 }
 
+/** The three home-screen shortcuts point at the three cards that already exist on this page. */
+const LAUNCH_ANCHORS = { live: '#live-card', notes: '.materials', alerts: '#alerts-card' }
+
+function applyLaunchTarget() {
+  const want = state.launchTarget
+  if (!want) return
+  state.launchTarget = ''
+  const selector = LAUNCH_ANCHORS[want]
+  if (!selector) return
+  const target = document.querySelector(selector)
+  if (!target) return
+  if (target.hidden) {
+    if (want === 'alerts') showToast(ALERTS_COPY.unsupported)
+    return
+  }
+  try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* older browsers */ }
+}
+
 function kindLabel(kind) {
   if (kind === 'file') return 'File / PDF'
   if (kind === 'link') return 'Link'
@@ -1209,6 +1230,7 @@ async function start() {
     const params = new URLSearchParams(location.search)
     token = cleanLine(params.get('token'), 128)
     state.deepLinkNote = cleanLine(params.get('note'), 64)
+    state.launchTarget = cleanLine(params.get('go') || params.get('open'), 16).toLowerCase()
   } catch { /* no query string support */ }
 
   // Strip the token from the address bar before anything else: it is single use, and a refresh,
@@ -1217,6 +1239,15 @@ async function start() {
     try {
       const url = new URL(location.href)
       url.searchParams.delete('token')
+      window.history.replaceState({}, '', url.toString())
+    } catch { /* history blocked */ }
+  }
+  // A shortcut's ?go= is one-shot too: it scrolls once and never again on a refresh.
+  if (state.launchTarget) {
+    try {
+      const url = new URL(location.href)
+      url.searchParams.delete('go')
+      url.searchParams.delete('open')
       window.history.replaceState({}, '', url.toString())
     } catch { /* history blocked */ }
   }
