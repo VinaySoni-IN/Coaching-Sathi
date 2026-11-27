@@ -81,7 +81,7 @@ export function StatusList({ students, status, layout, locked, onSet, onLockedTa
   const move = (s: Student) => (locked ? onLockedTap() : onSet(s.id, target))
 
   if (students.length === 0) {
-    return <Empty text={isP ? 'Nobody marked present yet. Swipe left on cards or tap ✓ in list view.' : 'No absentees so far. Swipe right on a card to mark someone absent.'} />
+    return <Empty text={isP ? 'Nobody marked present yet. Swipe left on cards or tap the check button in list view.' : 'No absentees so far. Swipe right on a card to mark someone absent.'} />
   }
 
   return (

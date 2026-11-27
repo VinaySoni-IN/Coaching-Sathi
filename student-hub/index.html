@@ -103,7 +103,13 @@
         <div class="glass toolbar" aria-label="Filter study materials">
           <label class="field search-field">
             <span class="sr-only">Search notes</span>
-            <span class="search-icon" aria-hidden="true">⌕</span>
+            <span class="search-icon" aria-hidden="true">
+              <!-- Drawn, not typed: U+2315 renders as an empty box on the Android fonts. -->
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.2-3.2" />
+              </svg>
+            </span>
             <input id="search" type="search" autocomplete="off" placeholder="Search by title or subject" />
           </label>
           <label class="field">
@@ -151,6 +157,6 @@
 
     <!-- Relative paths only: works from /student-hub/ on GitHub Pages and from dist/student-hub/ on Vercel. -->
     <script src="./vendor/supabase.js"></script>
-    <script type="module" src="./portal.js?v=14"></script>
+    <script type="module" src="./portal.js?v=15"></script>
   </body>
 </html>

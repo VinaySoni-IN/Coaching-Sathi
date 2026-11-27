@@ -751,7 +751,8 @@ describe('Student Portal and RLS (SP)', () => {
     expect(fakeHubStudentsFor('t1').filter((row) => row.is_activated)).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'NEET Biology' }))
     const back = await screen.findByRole('region', { name: 'Students in NEET Biology' })
-    expect(await within(back).findByText('Device linked ✓')).toBeTruthy()
+    // The tick is a Lucide icon now (a typed ✓ is tofu on some Android fonts), so the label is text.
+    expect(await within(back).findByText('Device linked')).toBeTruthy()
 
     // Switching phones: the device dies, the history stays.
     fireEvent.click(await within(back).findByRole('button', { name: 'Reset and generate a new link for Aarav Sharma' }))
@@ -810,7 +811,9 @@ describe('Student Portal and RLS (SP)', () => {
     expect(portal).toContain("elem('h3', 'meeting-title', title)")
     expect(portal).toContain("elem('p', 'meeting-sub', facts.filter(Boolean).join(' · '))")
     expect(portal).toContain('`${formatRemaining(ms)} left`')
-    expect(portal).toContain("'Join class ↗'")
+    // The arrow is drawn (lucide arrow-up-right), not typed: ↗ is tofu on some Android fonts.
+    expect(portal).toContain("elem('a', 'join-btn is-live', 'Join class')")
+    expect(portal).toContain('join.append(icon(ARROW_UP_RIGHT_PATHS, 16))')
     expect(portal).toContain('Opens at start time')
     // The three-pill header that made the card loud is gone, and form labels never become class names.
     expect(portal).not.toContain('Duration: ')
@@ -1196,7 +1199,7 @@ describe('Student Portal and RLS (SP)', () => {
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
     expect(html).toMatch(/styles\.css\?v=18/)
-    expect(html).toMatch(/portal\.js\?v=14/)
+    expect(html).toMatch(/portal\.js\?v=15/)
   })
 
   it('SP-11 the locked card is all left-aligned and reads as a blocked state, not a neutral card', () => {

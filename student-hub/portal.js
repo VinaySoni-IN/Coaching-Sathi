@@ -85,6 +85,45 @@ function elem(tag, className = '', text) {
   return node
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/**
+ * Line icons are drawn, not typed. The folder heading used to be a text glyph (U+25A4), which is
+ * whatever the student's system font decides it is — a hairline box on one phone, tofu on the next.
+ * Paths come from the same Lucide set the Teacher App uses, so both halves look like one product.
+ */
+function icon(paths, size = 15) {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('focusable', 'false')
+  for (const d of paths) {
+    const path = document.createElementNS(SVG_NS, 'path')
+    path.setAttribute('d', d)
+    svg.append(path)
+  }
+  return svg
+}
+
+/** Lucide `folder`. */
+const FOLDER_PATHS = ['M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z']
+
+/** Lucide `arrow-up-right` — "opens somewhere else". A typed arrow (U+2197) is a font gamble. */
+const ARROW_UP_RIGHT_PATHS = ['M7 7h10v10', 'M7 17 17 7']
+
+function folderIcon() {
+  const tile = elem('span', 'folder-icon')
+  tile.append(icon(FOLDER_PATHS))
+  return tile
+}
+
 function formatDate(iso) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
@@ -758,7 +797,8 @@ function meetingCard(row) {
   if (!href) {
     article.append(elem('span', 'join-btn is-disabled', live ? 'Link coming soon' : 'Link on the way'))
   } else if (live) {
-    const join = elem('a', 'join-btn is-live', 'Join class ↗')
+    const join = elem('a', 'join-btn is-live', 'Join class')
+    join.append(icon(ARROW_UP_RIGHT_PATHS, 16))
     join.href = href
     join.target = '_blank'
     join.rel = 'noopener noreferrer'
@@ -939,7 +979,9 @@ function noteCard(note) {
       let host = 'Open the shared resource'
       try { host = `Shared from ${new URL(href).host.replace(/^www\./, '')}` } catch { /* keep fallback */ }
       card.append(elem('p', 'note-detail', host))
-      actions.append(makeAction('Open link ↗', href, '', true, touchNote), copyButton('Copy link', href))
+      const openLink = makeAction('Open link', href, '', true, touchNote)
+      openLink.append(icon(ARROW_UP_RIGHT_PATHS, 14))
+      actions.append(openLink, copyButton('Copy link', href))
     } else {
       card.append(elem('p', 'note-detail', 'This link is not available.'))
     }
@@ -1022,7 +1064,7 @@ function renderNotes() {
     const group = elem('section', 'folder-group')
     const head = elem('div', 'folder-head')
     head.append(
-      elem('span', 'folder-icon', '▤'),
+      folderIcon(),
       elem('h3', 'folder-title', folder),
       elem('span', 'folder-batch', state.batch || 'Batch'),
       elem('span', 'folder-count', `${items.length} ${items.length === 1 ? 'item' : 'items'}`),

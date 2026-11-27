@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8')
@@ -298,6 +298,63 @@ describe('Student Hub push alerts (PA)', () => {
     expect(manifest.display).toBe('standalone')
     expect(manifest.start_url).toBe('./')
     expect(manifest.scope).toBe('./')
+  })
+
+  it('PA-18 the portal draws its icons instead of typing them', () => {
+    // The folder heading shipped as the text character U+25A4, which the student's system font is free
+    // to render as a hairline box (or tofu). An icon must be geometry, not a codepoint.
+    const js = read(PORTAL)
+    const boxDrawing = /[\u25A0-\u25FF\u2500-\u257F]/
+    expect(js, 'no box-drawing or geometric character is used as an icon').not.toMatch(boxDrawing)
+
+    // It builds real SVG through the shared helper, with the Lucide folder path the Teacher App uses.
+    expect(js).toContain("const SVG_NS = 'http://www.w3.org/2000/svg'")
+    expect(js).toContain('function icon(paths, size = 15)')
+    expect(js).toContain("svg.setAttribute('aria-hidden', 'true')")
+    expect(js).toContain('M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93')
+    expect(js).toContain('function folderIcon()')
+    expect(js).toContain('      folderIcon(),')
+    expect(js).not.toContain("elem('span', 'folder-icon',")
+
+    // The same rule for the two "opens somewhere else" affordances: a typed ↗ is a font gamble.
+    expect(js).not.toContain("'Join class ↗'")
+    expect(js).not.toContain("'Open link ↗'")
+    expect(js).toContain("const ARROW_UP_RIGHT_PATHS = ['M7 7h10v10', 'M7 17 17 7']")
+    expect(js).toContain('join.append(icon(ARROW_UP_RIGHT_PATHS, 16))')
+    expect(js).toContain('openLink.append(icon(ARROW_UP_RIGHT_PATHS, 14))')
+
+    // Same rule for the search field: U+2315 was an empty box on Android.
+    const html = read('student-hub/index.html')
+    expect(html).not.toContain('⌕')
+    expect(html).toContain('<span class="search-icon" aria-hidden="true">')
+    expect(html).toMatch(/<circle cx="11" cy="11" r="7" \/>/)
+    expect(read('student-hub/styles.css')).toContain('.search-icon svg { display: block; }')
+
+    // The tile keeps its size; the SVG is block-level so the glyph cannot sit on a text baseline.
+    const css = read('student-hub/styles.css')
+    expect(css).toContain('.folder-icon svg { display: block; }')
+    expect(css).toMatch(/\.folder-icon \{[^}]*width: 28px;[^}]*height: 28px;/)
+  })
+
+  it('PA-19 nothing in either app draws an icon with a character code', () => {
+    // The folder heading shipped U+25A4 and the search field U+2315; on the phones this is used on,
+    // both are an empty box. Prose may use a plain right arrow (U+2192) — an icon may not.
+    const files = [
+      'student-hub/index.html',
+      'student-hub/portal.js',
+      'student-hub/styles.css',
+      ...readdirSync('src', { recursive: true })
+        .map((f) => `src/${String(f)}`)
+        .filter((f) => /\.(ts|tsx|css)$/.test(f)),
+    ]
+    const banned = /[\u2190-\u2191\u2193-\u21FF\u2300-\u23FF\u2500-\u27BF]/
+    for (const file of files) {
+      const text = read(file)
+      const hit = text.match(banned)
+      expect(hit?.[0], `${file} draws an icon with ${hit ? `U+${hit[0].codePointAt(0)!.toString(16).toUpperCase()}` : 'nothing'}`).toBeUndefined()
+    }
+    // The tick and the arrow that used to be typed now come from the same Lucide set as the rest.
+    expect(read('src/components/StudentHubManager.tsx')).toContain('<Check size={11} strokeWidth={3} aria-hidden="true" />')
   })
 
   it('PA-14 a note shows when it was shared under its title, not at the end of the pill row', () => {

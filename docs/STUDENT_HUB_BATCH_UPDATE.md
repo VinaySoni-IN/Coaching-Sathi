@@ -1,6 +1,8 @@
 # Student Hub v3 — many meetings, scheduling, shareable notes & storage-safe deletes
 
-Copy-pasteable companion to the current workspace, split into the three requested sections:
+Copy-pasteable companion to the workspace as it was when this batch shipped, split into the three
+requested sections. Treat `student-hub/` and `src/` as the source of truth — this document is a
+snapshot and is not updated for every later tweak.
 **1) Supabase SQL Schema & Storage Policy Fix**, **2) Teacher Hub (`index.html` / JS & CSS)**, **3) Student Hub (`student-hub/index.html` / JS & CSS)**.
 
 ## What changed
@@ -4155,7 +4157,7 @@ function renderNotes() {
     const group = elem('section', 'folder-group')
     const head = elem('div', 'folder-head')
     head.append(
-      elem('span', 'folder-icon', '▤'),
+      folderIcon(),
       elem('h3', 'folder-title', folder),
       elem('span', 'folder-batch', state.batch || 'Batch'),
       elem('span', 'folder-count', `${items.length} ${items.length === 1 ? 'item' : 'items'}`),
@@ -4959,7 +4961,8 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .folder-group { display: grid; gap: 12px; }
 .folder-group + .folder-group { margin-top: 22px; }
 .folder-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 0 4px; }
-.folder-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 10px; background: rgba(255,255,255,.08); color: var(--present); font-size: 14px; }
+.folder-icon { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border-radius: 10px; background: rgba(255,255,255,.08); color: var(--present); }
+.folder-icon svg { display: block; }
 .folder-title { font-size: 18px; }
 .folder-batch { padding: 5px 9px; border-radius: 999px; background: rgba(94,242,176,.10); border: 1px solid rgba(94,242,176,.22); color: #bfffe2; font-size: 10px; font-weight: 700; }
 .folder-count { margin-left: auto; color: var(--faint); font-size: 11px; }
