@@ -633,7 +633,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(read('.github/workflows/pages.yml')).toContain('actions/deploy-pages@v4')
     expect(read('.github/workflows/pages.yml')).not.toContain('enablement: true')
     expect(read('vercel.json')).toContain('/student-hub')
-    expect(read('public/sw.js')).toContain('coachsathi-v24')
+    expect(read('public/sw.js')).toContain('coachsathi-v25')
     expect(read('public/sw.js')).toContain("url.pathname.includes('/student-hub/')")
   })
 
@@ -1189,7 +1189,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=11/)
+    expect(html).toMatch(/styles\.css\?v=12/)
     expect(html).toMatch(/portal\.js\?v=11/)
   })
 
