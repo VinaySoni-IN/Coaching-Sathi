@@ -272,17 +272,18 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 
 /* Alerts already on: the card is replaced by one pill in the top bar, beside the name. It is the
    whole state — tap it to turn alerts off. Turning notifications off is the destructive direction,
-   so the pill carries the same red the app uses for "absent", and no bell: the words are enough.
-   The name truncates before the pill does, so it never gets pushed off a 360px screen. */
+   so the pill carries the same red the app uses for "absent", and its icon is a bell with a slash
+   through it. The name truncates before the pill does, so it never gets pushed off a 360px screen. */
 .alerts-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   flex: 0 0 auto;
   /* The top bar puts the identity first on phones (order: 1), so the pill claims 2 and stays right. */
   order: 2;
   margin-left: auto;
-  padding: 7px 13px;
+  padding: 6px 13px 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255, 93, 115, .34);
   background: rgba(255, 93, 115, .13);
@@ -293,6 +294,7 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   letter-spacing: -.01em;
   white-space: nowrap;
 }
+.alerts-pill-icon { display: inline-flex; color: #ff9aa8; }
 .alerts-pill-label-short { display: none; }
 .alerts-pill:active { transform: scale(.99); background: rgba(255, 93, 115, .20); }
 .alerts-pill[hidden] { display: none; }
@@ -301,7 +303,7 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 /* Most phones are 360-400px wide and the top bar also carries the brand mark, the name and the
    batch line: up to 400px the pill shortens to "Turn off" so none of that has to be clipped. */
 @media (max-width: 400px) {
-  .alerts-pill { padding: 7px 11px; }
+  .alerts-pill { padding: 6px 11px 6px 9px; }
   .alerts-pill-label { display: none; }
   .alerts-pill-label-short { display: inline; }
 }
