@@ -1,0 +1,65 @@
+---
+name: Bug report
+description: Something in the app is broken, wrong, or does nothing when tapped.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste a working login, a student's magic link, or a real
+        student's name, phone number or fee record here** — this issue is public. Redact screenshots.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The symptom, in one or two sentences. "The Save button does nothing" is enough.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Students
+        2. Tap a student
+        3. Tap Edit profile
+        4. …
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and browser
+      placeholder: Redmi Note 12, Chrome 139 / iPhone 13, Safari 18
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app
+      options:
+        - Attendance
+        - Fees and invoices
+        - Students and batches
+        - Student Hub Manager (teacher)
+        - Student Portal (student)
+        - Accounts, backup and restore
+        - Install / offline (PWA)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: Only if you have it. Remove anything that looks like a token or a link first.
+      render: shell
+    validations:
+      required: false
