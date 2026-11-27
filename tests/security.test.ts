@@ -154,4 +154,25 @@ describe('Security checklist that the code can enforce (SEC)', () => {
     // The lockfile is committed, so a clean install is the lockfile and not a re-resolution.
     expect(read('package-lock.json').length).toBeGreaterThan(1000)
   })
+
+  it('SEC-12 no working login is published in the docs', () => {
+    // A README is a public page. A demo account there is a live door into the product, whatever its
+    // row count, so credentials must never come back: not as a table, not as a "user / pass" line.
+    const docs = [
+      'README.md',
+      ...readdirSync('docs')
+        .filter((name) => name.endsWith('.md'))
+        .map((name) => `docs/${name}`),
+    ]
+    const credentialRow = /`[^`]*@[^`]*`\s*\|\s*`[^`]{6,}`/
+    const passwordish = /password\s*[:=]\s*`?[^`\s]{6,}/i
+
+    for (const file of docs) {
+      const text = read(file)
+      expect(text, file).not.toMatch(credentialRow)
+      expect(text, file).not.toMatch(passwordish)
+      // The deleted demo account must stay deleted, by name.
+      expect(text.toLowerCase(), file).not.toContain('coachingsathi.app')
+    }
+  })
 })
