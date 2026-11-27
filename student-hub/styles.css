@@ -544,7 +544,11 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .folder-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 0 4px; }
 .folder-icon { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border-radius: 10px; background: rgba(255,255,255,.08); color: var(--present); }
 .folder-icon svg { display: block; }
-.folder-title { font-size: 18px; }
+/* One heading size for everything the student reads as a title: the section ("Notes & study
+   materials"), a folder ("Unfiled") and a note all share the h2 scale instead of shrinking away
+   underneath it. A folder heading at 18px next to a 23px section heading read like a mistake. */
+.folder-title,
+.note-title { font-size: clamp(23px, 4vw, 31px); line-height: 1.15; font-weight: 600; letter-spacing: -.03em; }
 .folder-batch { padding: 5px 9px; border-radius: 999px; background: rgba(94,242,176,.10); border: 1px solid rgba(94,242,176,.22); color: #bfffe2; font-size: 10px; font-weight: 700; }
 .folder-count { margin-left: auto; color: var(--faint); font-size: 11px; }
 .folder-notes { display: grid; gap: 12px; }

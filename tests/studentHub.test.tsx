@@ -1198,7 +1198,7 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=18/)
+    expect(html).toMatch(/styles\.css\?v=19/)
     expect(html).toMatch(/portal\.js\?v=15/)
   })
 
