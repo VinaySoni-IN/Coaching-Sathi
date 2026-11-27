@@ -371,7 +371,9 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .topbar-name { font-family: var(--font-display); font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar-batch { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Locked screen: no link, no hub. One centred card, nothing to fill in and nothing to get wrong. */
+/* Locked screen: no link, no hub. One card, nothing to fill in and nothing to get wrong.
+   Blocked access is a warning state, so the card carries a red edge and a red rule beside the
+   reason. Every line of copy starts at the same left edge: nothing is centred. */
 .locked {
   position: fixed;
   inset: 0;
@@ -379,7 +381,9 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   display: grid;
   place-items: center;
   padding: 18px;
-  background: rgba(5, 5, 7, .82);
+  background:
+    radial-gradient(90% 68% at 50% 14%, rgba(255, 93, 115, .12), transparent 62%),
+    rgba(5, 5, 7, .84);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
@@ -389,12 +393,44 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
   padding: 26px;
   border-radius: 32px;
   text-align: left;
+  border: 1px solid rgba(255, 93, 115, .30);
+  background:
+    radial-gradient(120% 92% at 100% 0%, rgba(255, 93, 115, .16), transparent 58%),
+    linear-gradient(145deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.02) 50%, rgba(255,255,255,.05) 100%),
+    var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .16),
+    inset 0 -1.5px 0 rgba(255, 255, 255, .06),
+    0 18px 54px -18px rgba(255, 93, 115, .38),
+    0 14px 44px -10px rgba(0, 0, 0, .9);
 }
 .locked-card > .brand-mark { margin: 0 0 16px; }
-.locked-card .eyebrow { margin: 0 0 6px; }
+.locked-card .brand-mark {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .45),
+    0 0 0 1px rgba(255, 93, 115, .38),
+    0 10px 26px -12px rgba(255, 93, 115, .70);
+}
+.locked-card .eyebrow { margin: 0 0 6px; color: rgba(255, 168, 178, .88); }
 .locked-card h2 { margin: 0 0 10px; font-size: 27px; }
-.onboarding-sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
-.onboarding-note { margin: 16px 0 0; color: var(--faint); font-size: 11px; text-align: center; }
+.onboarding-sub {
+  margin: 0 0 20px;
+  padding-left: 12px;
+  border-left: 2px solid var(--live);
+  color: rgba(255, 224, 228, .92);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: left;
+}
+.onboarding-note {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 93, 115, .16);
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+}
 
 
 .scope-summary { margin: 0 2px 12px; color: var(--muted); font-size: 12px; font-weight: 600; }

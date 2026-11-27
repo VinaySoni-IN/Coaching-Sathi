@@ -1180,7 +1180,7 @@ describe('Student Portal and RLS (SP)', () => {
 
     // Tile -> eyebrow -> title -> sentence share one rhythm instead of stacking three margins.
     expect(css).toContain('.locked-card > .brand-mark { margin: 0 0 16px; }')
-    expect(css).toContain('.locked-card .eyebrow { margin: 0 0 6px; }')
+    expect(css).toContain('.locked-card .eyebrow { margin: 0 0 6px; color: rgba(255, 168, 178, .88); }')
     expect(css).toContain('.locked-card h2 { margin: 0 0 10px; font-size: 27px; }')
 
     // The dead setup styles are gone rather than left to rot beside the new ones.
@@ -1189,8 +1189,32 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=12/)
+    expect(html).toMatch(/styles\.css\?v=13/)
     expect(html).toMatch(/portal\.js\?v=11/)
+  })
+
+  it('SP-11 the locked card is all left-aligned and reads as a blocked state, not a neutral card', () => {
+    const css = read('student-hub/styles.css')
+
+    // Nothing inside the card is centred: the reason and the one-link note both start on the left edge.
+    const note = css.match(/\.onboarding-note \{([^}]*)\}/)?.[1] ?? ''
+    expect(note).toContain('text-align: left')
+    expect(note).not.toContain('text-align: center')
+    const sub = css.match(/\.onboarding-sub \{([^}]*)\}/)?.[1] ?? ''
+    expect(sub).toContain('text-align: left')
+    expect(sub).not.toContain('text-align: center')
+
+    // Every rule that can affect the card's text boxes is left too, so no line can drift to centre.
+    for (const block of css.match(/\.locked-card[^{]*\{[^}]*\}/g) ?? []) {
+      expect(block, block).not.toContain('text-align: center')
+    }
+
+    // Red danger accents: red edge on the card, a red rule beside the sentence, red-tinted tile ring.
+    const card = css.match(/\.locked-card \{([^}]*)\}/)?.[1] ?? ''
+    expect(card).toMatch(/rgba\(255, 93, 115/)
+    expect(sub).toMatch(/border-left: 2px solid var\(--live\)/)
+    expect(css).toMatch(/\.locked-card \.brand-mark \{[^}]*rgba\(255, 93, 115/)
+    expect(css).toMatch(/\.locked \{[^}]*rgba\(255, 93, 115/)
   })
 
   it('SP-04 keeps student copy honest: friendly empty states, no backend detail, right-aligned search icon', () => {
