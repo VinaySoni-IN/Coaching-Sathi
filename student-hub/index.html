@@ -14,7 +14,10 @@
     <link rel="icon" type="image/png" sizes="32x32" href="../favicon-dark-32-v14.png" media="(prefers-color-scheme: dark)" />
     <link rel="icon" type="image/png" sizes="32x32" href="../favicon-light-32-v14.png" media="(prefers-color-scheme: light)" />
     <link rel="apple-touch-icon" sizes="180x180" href="../student-apple-touch-icon-v15.png" />
-    <link rel="stylesheet" href="./styles.css?v=13" />
+    <!-- An installable manifest is what lets an iPhone add the Hub to the Home Screen, which is
+         also the only way iOS will deliver class alerts. -->
+    <link rel="manifest" href="./manifest.webmanifest?v=1" />
+    <link rel="stylesheet" href="./styles.css?v=14" />
   </head>
   <body>
     <div class="ambient" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span></div>
@@ -44,6 +47,25 @@
           <div class="loading-line"><span class="spinner" aria-hidden="true"></span> Checking for a live class…</div>
         </div>
         <div id="sync-banner" class="sync-banner" role="alert" hidden></div>
+      </section>
+
+      <!-- Alerts are opt-in per phone: the browser only asks for notification permission after a
+           tap, and the subscription is scoped by the device token, so a student is only ever told
+           about their own batch. -->
+      <section id="alerts-card" class="glass alerts-card" aria-labelledby="alerts-title" hidden>
+        <div class="alerts-head">
+          <span class="alerts-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+          </span>
+          <div class="alerts-copy">
+            <h2 id="alerts-title">Class &amp; note alerts</h2>
+            <p id="alerts-text" class="alerts-text">Get a notification on this phone when your teacher goes live or shares a new note.</p>
+          </div>
+        </div>
+        <button id="alerts-btn" type="button" class="alerts-btn" hidden>Turn on alerts</button>
       </section>
 
       <section class="materials" aria-labelledby="materials-title">
@@ -108,6 +130,6 @@
 
     <!-- Relative paths only: works from /student-hub/ on GitHub Pages and from dist/student-hub/ on Vercel. -->
     <script src="./vendor/supabase.js"></script>
-    <script type="module" src="./portal.js?v=11"></script>
+    <script type="module" src="./portal.js?v=12"></script>
   </body>
 </html>

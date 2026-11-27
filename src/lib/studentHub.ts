@@ -595,6 +595,53 @@ export async function createStudentNote(teacherId: string, input: NewStudentNote
 }
 
 /**
+ * Tell the phones of this batch that a class went live or a note landed.
+ *
+ * The edge function decides the audience: it loads the row the teacher just published, proves this
+ * account owns it, and only then alerts subscriptions whose student is still in that batch on the
+ * device token they were created with. Nothing here names a batch or a list of students — a client
+ * cannot widen the audience even if it is tampered with.
+ *
+ * Returns a result instead of throwing: the class or note is already saved, so a push problem must
+ * be reported to the teacher, never allowed to look like a failed save.
+ */
+export interface AlertResult {
+  ok: boolean
+  sent: number
+  pruned: number
+  /** Plain sentence for the teacher, only set when delivery did not fully work. */
+  message?: string
+}
+
+export async function notifyStudentAlerts(kind: 'live' | 'note', id: string): Promise<AlertResult> {
+  const rowId = cleanLine(id, 64)
+  if (!rowId) return { ok: false, sent: 0, pruned: 0, message: 'Alerts were skipped: there was nothing to announce.' }
+  try {
+    const { data, error } = await sb().functions.invoke('notify-students', { body: { kind, id: rowId } })
+    if (error) {
+      let detail = ''
+      try {
+        const body = await (error as { context?: Response }).context?.json()
+        detail = cleanLine(body && (body.message || body.error), 160)
+      } catch { /* the function answered without a JSON body */ }
+      return { ok: false, sent: 0, pruned: 0, message: detail || 'Phone alerts could not be sent. It is still saved.' }
+    }
+    const payload = (data ?? {}) as { ok?: boolean; sent?: number; pruned?: number; message?: string; error?: string }
+    if (payload.error) {
+      return { ok: false, sent: 0, pruned: 0, message: cleanLine(payload.message, 160) || 'Phone alerts could not be sent.' }
+    }
+    return {
+      ok: payload.ok !== false,
+      sent: Number(payload.sent ?? 0),
+      pruned: Number(payload.pruned ?? 0),
+      message: payload.message ? cleanLine(payload.message, 160) : undefined,
+    }
+  } catch {
+    return { ok: false, sent: 0, pruned: 0, message: 'Phone alerts could not be sent. Check the connection and try again.' }
+  }
+}
+
+/**
  * Delete a note the way Supabase requires: the object goes first through the Storage API, then the
  * metadata row. Deleting `storage.objects` rows in SQL is rejected with
  * "Direct deletion from storage tables is not allowed. Use the Storage API instead."

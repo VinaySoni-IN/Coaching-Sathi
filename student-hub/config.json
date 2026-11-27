@@ -1,4 +1,5 @@
 {
   "supabaseUrl": "https://urbywuwtcjarwmjsfmem.supabase.co",
-  "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVyYnl3dXd0Y2phcndtanNmbWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3NjE3NzgsImV4cCI6MjExMDMzNzc3OH0.Erb6lXNn4KunGBwZ-ibFnLFEfae4CdzPi2WFKgrh9tw"
+  "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVyYnl3dXd0Y2phcndtanNmbWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3NjE3NzgsImV4cCI6MjExMDMzNzc3OH0.Erb6lXNn4KunGBwZ-ibFnLFEfae4CdzPi2WFKgrh9tw",
+  "vapidPublicKey": "BIYldqavG1RX1_obC56gS3B4HM6Krz70FfAk0lTKgcBjYyzL_T4F6y-hP6sVsxE7Y1vxBgcr3bunHi3NK4BRlwk"
 }

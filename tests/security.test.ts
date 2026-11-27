@@ -117,13 +117,20 @@ describe('Security checklist that the code can enforce (SEC)', () => {
     expect(sql).toContain('revoke all on function public.handle_new_user() from public, anon, authenticated')
     expect(sql).toContain('revoke all on function public.log_state() from public, anon, authenticated')
     expect(sql).toContain('revoke execute on function public.student_hub_meeting_sync() from public, anon')
-    // The portal needs exactly these five, and the file check that replaced the header policy.
+    // The portal needs exactly these, and the file check that replaced the header policy. The three
+    // push RPCs are added by the alerts migration and still keyed on the device token.
     const portal = read('student-hub/portal.js')
     const calls = [...portal.matchAll(/client\.rpc\('([a-z_]+)'/g)].map((match) => match[1])
     expect(new Set(calls)).toEqual(new Set([
       'redeem_magic_link', 'verify_student_session', 'log_student_activity',
       'get_student_batch_data', 'get_single_student_note',
+      'save_push_subscription', 'delete_push_subscription', 'my_push_state',
     ]))
+    // The lookup those RPCs share stays internal: anon can never ask who owns a device token.
+    const push = read('supabase/migrations/20261127090000_student_hub_push_alerts.sql')
+    expect(push).toContain('revoke all on function public.push_student_for_device(text) from public, anon, authenticated')
+    // And the subscription table itself is never handed to anon.
+    expect(push).toContain('revoke all on public.student_push_subs from public, anon, authenticated')
   })
 
   it('SEC-10 backend wording never reaches a teacher', () => {

@@ -12,7 +12,7 @@ anonymous storage read.
 
 | # | Item | Verdict |
 |---|------|---------|
-| 1 | Misconfigured database (no RLS) | **PASS** — RLS on all 10 public tables, zero `anon` table grants |
+| 1 | Misconfigured database (no RLS) | **PASS** — RLS on all 11 public tables (incl. `student_push_subs`), zero `anon` table grants |
 | 2 | Unprotected API routes | **N/A** — no API routes; static site + Supabase RPCs that check identity |
 | 3 | Committed or served secrets | **FIXED** — no secrets tracked; `.env` now ignored |
 | 4 | Broken access control (IDOR) | **FIXED** — file reads were scoped by client headers; now by device token |
@@ -230,7 +230,9 @@ select p.proname,
  order by anon_can_execute desc, p.proname;
 ```
 
-`anon` should be able to execute exactly seven functions: `redeem_magic_link`,
+`anon` should be able to execute exactly ten functions: `redeem_magic_link`,
 `verify_student_session`, `log_student_activity`, `get_student_batch_data`,
-`get_single_student_note`, `student_hub_file_allowed`, and `email_taken` (the sign-up pre-check
-covered in the residual-risk note).
+`get_single_student_note`, `student_hub_file_allowed`, `email_taken` (the sign-up pre-check
+covered in the residual-risk note), and the three Student Hub alert RPCs
+`save_push_subscription`, `delete_push_subscription` and `my_push_state` — each keyed on the
+device token, none of them readable without it. `push_student_for_device` stays internal.
