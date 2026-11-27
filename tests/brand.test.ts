@@ -49,9 +49,9 @@ describe('Brand icons (BI)', () => {
     expect(sizes).toContain('192x192:any')
     expect(sizes).toContain('512x512:any')
     expect(sizes).toContain('512x512:maskable')
-    expect(read('index.html')).toContain('href="./apple-touch-icon-v14.png"')
+    expect(read('index.html')).toContain('href="./apple-touch-icon-v15.png"')
     // The old artwork is gone, not left behind to be picked up by an old manifest.
-    for (const stale of ['favicon-anim-32-v13.png', 'icon-192-v10.png', 'apple-touch-icon-v10.png']) {
+    for (const stale of ['favicon-anim-32-v13.png', 'icon-192-v10.png', 'apple-touch-icon-v10.png', 'icon-192-v14.png', 'apple-touch-icon-v14.png']) {
       expect(has(`public/${stale}`), stale).toBe(false)
     }
   })
@@ -60,21 +60,46 @@ describe('Brand icons (BI)', () => {
     const html = read('index.html')
     expect(html).toContain("img-src 'self' data: blob:")
     // Nothing in the icon set asks for a http(s) origin.
-    const files = readdirSync(resolve(process.cwd(), 'public')).filter((f) => /v14\.(png|ico)$/.test(f))
-    expect(files.length).toBeGreaterThanOrEqual(10)
+    const files = readdirSync(resolve(process.cwd(), 'public')).filter((f) => /v1[45]\.(png|ico)$/.test(f))
+    expect(files.length).toBe(17) // 8 banner colourways + 1 .ico + 4 teacher icons + 4 student icons
   })
 
   it('BI-06 the sign-in screen shows the new logo instead of the old generic cap glyph', () => {
     const src = read('src/components/AuthScreen.tsx')
-    expect(src).toContain("import logo from '../assets/logo-v14.png'")
+    expect(src).toContain("import logo from '../assets/logo-v15.png'")
     expect(src).toContain('<img src={logo}')
     expect(src).not.toContain('<GraduationCap size={24} />')
   })
 
   it('BI-07 the portal brand marks render the logo image, with an empty alt so screen readers skip it', () => {
     const html = read('student-hub/index.html')
-    const marks = html.match(/class="brand-mark[^"]*"[^>]*><img src="\.\.\/icon-192-v14\.png" alt="" \/>/g) ?? []
+    const marks = html.match(/class="brand-mark[^"]*"[^>]*><img src="\.\.\/student-icon-192-v15\.png" alt="" \/>/g) ?? []
     expect(marks.length).toBe(2)
     expect(html).not.toContain('aria-hidden="true">CS<')
+  })
+
+  it('BI-08 teachers and students install different apps: different artwork, different home-screen icon', () => {
+    const teacher = JSON.parse(read('public/manifest.webmanifest')).icons.map((i: { src: string }) => i.src)
+    const portal = read('student-hub/index.html')
+    expect(teacher.every((src: string) => /^icon-/.test(src))).toBe(true)
+    expect(portal).toContain('href="../student-apple-touch-icon-v15.png"')
+    // Nothing from the teacher set is reused as the student home-screen icon, and vice versa.
+    for (const icon of teacher) expect(portal).not.toContain(`/${icon}"`)
+    for (const name of ['student-icon-192-v15.png', 'student-icon-512-v15.png', 'student-icon-maskable-512-v15.png', 'student-apple-touch-icon-v15.png']) {
+      expect(has(`public/${name}`), name).toBe(true)
+    }
+  })
+
+  it('BI-09 the browser tab icons were not touched by the app-icon swap: both colourways still ship', () => {
+    for (const name of ['favicon-dark-32-v14.png', 'favicon-dark-48-v14.png', 'favicon-dark-128-v14.png', 'favicon-dark-180-v14.png',
+      'favicon-light-32-v14.png', 'favicon-light-48-v14.png', 'favicon-light-128-v14.png', 'favicon-light-180-v14.png', 'favicon-v14.ico']) {
+      expect(has(`public/${name}`), name).toBe(true)
+    }
+    const html = read('index.html')
+    expect(html).toContain('href="./favicon-dark-32-v14.png" media="(prefers-color-scheme: dark)"')
+    expect(html).toContain('href="./favicon-light-32-v14.png" media="(prefers-color-scheme: light)"')
+    const portal = read('student-hub/index.html')
+    expect(portal).toContain('href="../favicon-dark-32-v14.png" media="(prefers-color-scheme: dark)"')
+    expect(portal).toContain('href="../favicon-light-32-v14.png" media="(prefers-color-scheme: light)"')
   })
 })
