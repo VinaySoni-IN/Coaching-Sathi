@@ -203,4 +203,37 @@ describe('Student Hub push alerts (PA)', () => {
     expect(css).toContain('.alerts-card {')
     expect(css).toMatch(/\.alerts-text \{[^}]*text-align: left/)
   })
+
+  it('PA-13 once alerts are on the card steps aside for one small pill that can turn them off', () => {
+    const html = read('student-hub/index.html')
+    expect(html).toContain('id="alerts-pill"')
+    expect(html).toContain('Turn off notifications')
+    expect(html).toMatch(/id="alerts-pill"[^>]* hidden/)
+
+    const js = read(PORTAL)
+    // "on" is the only state that replaces the card: every other state still explains itself.
+    expect(js).toContain("const isOn = stateName === 'on'")
+    expect(js).toContain('els.alertsCard.hidden = !state.session || isOn')
+    expect(js).toContain('els.alertsPill.hidden = !state.session || !isOn')
+    // The pill is a real control wired to the same toggle, not a dead label.
+    expect(js).toContain("if (els.alertsPill) els.alertsPill.addEventListener('click', () => { void toggleAlerts() })")
+    expect(js).toContain('if (els.alertsPill) els.alertsPill.disabled = true')
+
+    const css = read('student-hub/styles.css')
+    expect(css).toContain('.alerts-pill {')
+    // display: grid on the card beats the UA [hidden] rule, so hiding it has to be explicit.
+    expect(css).toContain('.alerts-card[hidden] { display: none; }')
+    // hidden wins over the inline-flex display, or the closed pill would still paint.
+    expect(css).toContain('.alerts-pill[hidden] { display: none; }')
+  })
+
+  it('PA-14 a note shows when it was shared under its title, not at the end of the pill row', () => {
+    const js = read(PORTAL)
+    const title = js.indexOf("card.append(top, elem('h3', 'note-title'")
+    const date = js.indexOf("elem('p', 'note-date', date)")
+    expect(title).toBeGreaterThan(-1)
+    expect(date).toBeGreaterThan(title)
+    expect(js).not.toContain("top.append(elem('span', 'note-date', date))")
+    expect(read('student-hub/styles.css')).toContain('.note-card > .note-date {')
+  })
 })
