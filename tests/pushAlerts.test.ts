@@ -357,6 +357,17 @@ describe('Student Hub push alerts (PA)', () => {
     expect(read('src/components/StudentHubManager.tsx')).toContain('<Check size={11} strokeWidth={3} aria-hidden="true" />')
   })
 
+  it('PA-20 the section heading, a folder heading and a note title are one size', () => {
+    // "Notes & study materials" was 23px while the folder heading under it was 18px and a note title
+    // 19px — the folder looked like a subsection of a subsection. All three share the h2 scale now.
+    const css = read('student-hub/styles.css')
+    expect(css).toContain('.folder-title,\n.note-title { font-size: clamp(23px, 4vw, 31px);')
+    expect(css).not.toContain('.folder-title { font-size: 18px; }')
+    expect(css).toMatch(/h2 \{ margin: 0; font-size: clamp\(23px, 4vw, 31px\);/)
+    // The folder tile is a fixed 28px badge: the heading beside it must not push the row out of shape.
+    expect(read('student-hub/index.html')).toContain('styles.css?v=19')
+  })
+
   it('PA-14 a note shows when it was shared under its title, not at the end of the pill row', () => {
     const js = read(PORTAL)
     const title = js.indexOf("card.append(top, elem('h3', 'note-title'")
