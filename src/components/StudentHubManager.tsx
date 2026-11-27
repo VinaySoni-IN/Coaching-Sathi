@@ -1385,7 +1385,12 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
                         {student.roll ? <span className="shrink-0 text-[10px] tabular-nums text-white/30">#{student.roll}</span> : null}
                       </span>
                       <span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-[.08em] ${linked ? 'text-present' : pendingLink ? 'text-amber-200' : 'text-white/35'}`}>
-                        {linked ? 'Device linked ✓' : pendingLink ? 'Active unused link' : 'No link yet'}
+                        {linked ? (
+                          <span className="inline-flex items-center gap-1">
+                            Device linked
+                            <Check size={11} strokeWidth={3} aria-hidden="true" />
+                          </span>
+                        ) : pendingLink ? 'Active unused link' : 'No link yet'}
                       </span>
                       <span className="mt-0.5 block truncate text-[10.5px] text-white/35">
                         {row
