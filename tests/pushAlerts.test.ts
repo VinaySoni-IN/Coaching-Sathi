@@ -229,6 +229,17 @@ describe('Student Hub push alerts (PA)', () => {
     // Top-bar sizing: it must not wrap onto a second line or be pushed off a 360px screen.
     expect(css).toMatch(/\.alerts-pill \{[^}]*flex: 0 0 auto/)
     expect(css).toMatch(/\.alerts-pill \{[^}]*white-space: nowrap/)
+
+    // Turning alerts off is the destructive direction: red, not the green "alerts are on" tint.
+    const rule = css.match(/\.alerts-pill \{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).toMatch(/border: 1px solid rgba\(255, 93, 115/)
+    expect(rule).toMatch(/background: rgba\(255, 93, 115/)
+    expect(rule).not.toMatch(/94, 242, 176/)
+
+    // No bell: the words alone carry the pill, so the markup inside the button has no svg.
+    const button = html.slice(html.indexOf('<button id="alerts-pill"'), html.indexOf('</button>', html.indexOf('<button id="alerts-pill"')))
+    expect(button).not.toContain('<svg')
+    expect(button).toContain('Turn off notifications')
     // display: grid on the card beats the UA [hidden] rule, so hiding it has to be explicit.
     expect(css).toContain('.alerts-card[hidden] { display: none; }')
     // hidden wins over the inline-flex display, or the closed pill would still paint.
