@@ -270,27 +270,41 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 .alerts-btn[hidden] { display: none; }
 .alerts-btn:disabled { opacity: .55; }
 
-/* Alerts already on: the card is replaced by one quiet pill, so the page has no standing banner
-   repeating itself. The pill is the whole state — tap it to turn alerts off again. */
+/* Alerts already on: the card is replaced by one quiet pill that lives in the top bar, beside the
+   name. It is the whole state — tap it to turn alerts off again. The name truncates before the pill
+   does, so the pill never gets pushed off a 360px screen. */
 .alerts-pill {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 14px;
-  padding: 7px 13px 7px 10px;
+  gap: 6px;
+  flex: 0 0 auto;
+  /* The top bar puts the identity first on phones (order: 1), so the pill claims 2 and stays right. */
+  order: 2;
+  margin-left: auto;
+  padding: 6px 11px 6px 9px;
   border-radius: 999px;
   border: 1px solid rgba(94, 242, 176, .24);
   background: rgba(94, 242, 176, .10);
   color: #c9ffe6;
   font-family: var(--font-sans);
-  font-size: 11.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: -.01em;
+  white-space: nowrap;
 }
 .alerts-pill-icon { display: inline-flex; color: var(--present); }
+.alerts-pill-label-short { display: none; }
 .alerts-pill:active { transform: scale(.99); }
 .alerts-pill[hidden] { display: none; }
 .alerts-pill:disabled { opacity: .55; }
+
+/* 360-400px: the top bar also carries the brand mark and the student's name, so the pill keeps the
+   bell and shortens its label instead of shrinking the name to nothing. */
+@media (max-width: 400px) {
+  .alerts-pill { padding: 6px 10px 6px 8px; }
+  .alerts-pill-label { display: none; }
+  .alerts-pill-label-short { display: inline; }
+}
 
 .materials { margin-top: 30px; }
 .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
@@ -535,7 +549,9 @@ h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; }
 @media (max-width: 640px) {
   .topbar { padding: 8px 10px; }
   .topbar-inner { flex-wrap: wrap; }
-  .topbar-identity { order: 1; }
+  /* Basis 0 so a long student name truncates instead of wrapping the alerts pill onto a second
+     line — the pill stays on the row even at 360px. */
+  .topbar-identity { order: 1; flex: 1 1 0; }
   .locked-card { padding: 20px; border-radius: 26px; }
 }
 

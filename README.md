@@ -22,7 +22,7 @@ teacher *Priya Sharma · Bright Minds Academy* — 21 students across **NEET Bio
 | **Fees ledger** | **Students** |
 | <img src="docs/screenshots/03-fees.png" width="260" alt="Monthly fees with collected percentage, WhatsApp reminders and per-student invoice actions"> | <img src="docs/screenshots/04-students.png" width="260" alt="Student list with batch filter, search and WhatsApp actions"> |
 | **Student Hub Manager (teacher)** | **Student Portal (student)** |
-| <img src="docs/screenshots/05-hub.png" width="260" alt="Teacher view: per-student magic links at the end of the Hub — device linked, unused link, no link yet"> | <img src="docs/screenshots/06-student-hub.png" width="260" alt="Student view: live class countdown, upcoming class, alerts-on pill and notes"> |
+| <img src="docs/screenshots/05-hub.png" width="260" alt="Teacher view: per-student magic links at the end of the Hub — device linked, unused link, no link yet"> | <img src="docs/screenshots/06-student-hub.png" width="260" alt="Student view: live class countdown, upcoming class, alerts-on pill in the top bar, and notes"> |
 
 ### Demo account
 
