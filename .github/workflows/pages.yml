@@ -39,5 +39,10 @@ jobs:
           path: ./dist
           # dist/.nojekyll is a dotfile; Pages must ship it or the underscore-prefixed assets 404.
           include-hidden-files: true
+      # deploy-pages looks the artifact up immediately; the artifact API sometimes lags behind the
+      # upload step by a few seconds and the deploy then dies with "No artifacts named github-pages
+      # were found" even though the upload went green. Give it a moment.
+      - name: Let the Pages artifact settle
+        run: sleep 15
       - id: deployment
         uses: actions/deploy-pages@v5
