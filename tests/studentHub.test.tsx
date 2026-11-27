@@ -1189,8 +1189,8 @@ describe('Student Portal and RLS (SP)', () => {
     expect(css).not.toContain('.form-field')
 
     // The stylesheet is cache-busted so the phone actually fetches the change.
-    expect(html).toMatch(/styles\.css\?v=13/)
-    expect(html).toMatch(/portal\.js\?v=11/)
+    expect(html).toMatch(/styles\.css\?v=14/)
+    expect(html).toMatch(/portal\.js\?v=12/)
   })
 
   it('SP-11 the locked card is all left-aligned and reads as a blocked state, not a neutral card', () => {

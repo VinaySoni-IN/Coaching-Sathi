@@ -36,6 +36,7 @@ import {
   copyToClipboard,
   createStudentFolder,
   createStudentNote,
+  notifyStudentAlerts,
   currentTeacherId,
   DEFAULT_BATCH_NAME,
   DEFAULT_DURATION_MINUTES,
@@ -628,9 +629,18 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       })
       resetMeetingForm()
       const stateNow = meetingState(row)
-      const message = stateNow === 'live'
+      let message = stateNow === 'live'
         ? `Class is LIVE for ${row.batch_name} · ${formatDurationLabel(row.duration_minutes)}`
         : `Scheduled for ${formatWhen(row.scheduled_start)} · ${formatDurationLabel(row.duration_minutes)}`
+      // Only a class that is live right now is worth a phone alert. The result is always reported:
+      // a silent failure would leave the teacher believing students were told.
+      if (stateNow === 'live') {
+        const alerts = await notifyStudentAlerts('live', row.id)
+        message = alerts.ok
+          ? `${message} · ${alerts.sent > 0 ? `alerts sent to ${alerts.sent} phone${alerts.sent === 1 ? '' : 's'}` : 'no student has alerts on yet'}`
+          : `${message} · phone alerts failed`
+        if (!alerts.ok) say(alerts.message ?? 'Phone alerts could not be sent.')
+      }
       setStatus(message)
       say(message)
     } catch (e) {
@@ -722,8 +732,15 @@ export default function StudentHubManager({ teacher, batches, roster, initialBat
       setNotes((previous) => [row, ...previous])
       setFolders(await fetchMyFolders(uid, effectiveBatch))
       clearNoteForm()
-      setStatus('Added to Student Hub')
-      say('Note added to Student Hub')
+      const alerts = await notifyStudentAlerts('note', row.id)
+      const message = alerts.ok
+        ? (alerts.sent > 0
+          ? `Added to Student Hub · alerted ${alerts.sent} phone${alerts.sent === 1 ? '' : 's'}`
+          : 'Added to Student Hub · no student has alerts on yet')
+        : 'Added to Student Hub · phone alerts failed'
+      if (!alerts.ok) say(alerts.message ?? 'Phone alerts could not be sent.')
+      setStatus(message)
+      say(message)
     } catch (e) {
       setError(cloudMessage(e, 'Could not add this note.'))
     } finally {

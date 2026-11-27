@@ -41,6 +41,9 @@ const els = {
   notesSummary: document.getElementById('notes-summary'),
   notesList: document.getElementById('notes-list'),
   toast: document.getElementById('toast'),
+  alertsCard: document.getElementById('alerts-card'),
+  alertsText: document.getElementById('alerts-text'),
+  alertsBtn: document.getElementById('alerts-btn'),
 }
 
 const state = {
@@ -64,6 +67,8 @@ const state = {
   error: '',
   loading: false,
   loadedOnce: false,
+  /** 'off' | 'on' | 'unsupported' | 'blocked' | 'install' | 'error' */
+  alerts: 'off',
 }
 
 let client = null
@@ -178,6 +183,8 @@ async function readConfig() {
   return {
     url: url ? url.replace(/\/+$/, '') : '',
     key: cleanLine(override.supabaseAnonKey || fileConfig.supabaseAnonKey, 2000),
+    // Public half of the Web Push key pair. The private half only exists inside the edge function.
+    vapid: cleanLine(override.vapidPublicKey || fileConfig.vapidPublicKey, 300),
   }
 }
 
@@ -354,6 +361,215 @@ async function enterHub() {
   state.loadedOnce = false
   await loadAll()
   await checkDeepLink()
+}
+
+/* --------------------------------------------------------------------------------------------
+   1b. Phone alerts (Web Push). Opt-in per phone, and every path reports back: the button either
+       ends up as "Alerts on" or the card says exactly why it could not be turned on. Nothing here
+       decides who sees what — the fan-out matches the teacher and batch on the server.
+   ------------------------------------------------------------------------------------------ */
+const ALERTS_COPY = {
+  unsupported: "This browser can't show alerts. Open Student Hub in Chrome or Safari to turn them on.",
+  install: 'To get alerts on iPhone, add Student Hub to your Home Screen (tap Share, then Add to Home Screen), then open it from that icon.',
+  blocked: "Alerts are blocked for this site. Allow notifications for this page in your browser's site settings, then reload.",
+  error: 'Alerts could not start on this phone. Tap try again — if it keeps failing, reload the page.',
+}
+
+function b64uToBytes(value) {
+  const normalised = String(value || '').replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalised + '='.repeat((4 - (normalised.length % 4)) % 4)
+  const raw = atob(padded)
+  const bytes = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i)
+  return bytes
+}
+
+function isIosDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent || '')
+    || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
+}
+
+function isInstalled() {
+  try {
+    return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
+  } catch {
+    return false
+  }
+}
+
+function pushSupported() {
+  return typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+    && 'PushManager' in window && 'Notification' in window
+}
+
+function alertsCopy(stateName) {
+  const batch = state.batch ? ` for ${state.batch}` : ''
+  if (stateName === 'on') return `Alerts are on${batch}. This phone buzzes when your class goes live or a new note lands — only for your batch.`
+  if (stateName === 'unsupported') return ALERTS_COPY.unsupported
+  if (stateName === 'install') return ALERTS_COPY.install
+  if (stateName === 'blocked') return ALERTS_COPY.blocked
+  if (stateName === 'error') return ALERTS_COPY.error
+  return `Get a notification on this phone when ${state.teacherName || 'your teacher'} goes live or shares a new note. Only your batch.`
+}
+
+function paintAlerts(stateName, buttonLabel) {
+  state.alerts = stateName
+  if (!els.alertsCard) return
+  els.alertsCard.hidden = !state.session
+  els.alertsCard.classList.toggle('is-on', stateName === 'on')
+  els.alertsCard.classList.toggle('is-blocked', stateName === 'blocked' || stateName === 'unsupported')
+  if (els.alertsText) els.alertsText.textContent = alertsCopy(stateName)
+  if (els.alertsBtn) {
+    const label = buttonLabel || (stateName === 'on' ? 'Turn off alerts' : stateName === 'error' ? 'Try again' : 'Turn on alerts')
+    els.alertsBtn.textContent = label
+    els.alertsBtn.hidden = stateName === 'unsupported' || stateName === 'install' || stateName === 'blocked'
+  }
+}
+
+/** One registration for the whole portal; the browser ignores a second call with the same scope. */
+async function ensurePortalWorker() {
+  if (!pushSupported()) return null
+  try {
+    return await navigator.serviceWorker.register('./sw.js', { scope: './' })
+  } catch {
+    return null
+  }
+}
+
+async function remotePushState() {
+  try {
+    const { data, error } = await client.rpc('my_push_state', { p_device_token: state.session.device_token })
+    if (error) throw error
+    return data && typeof data === 'object' ? data : null
+  } catch {
+    return null
+  }
+}
+
+/** Decide what the card should say right now. Safe to call as often as we like. */
+async function renderAlerts() {
+  if (!els.alertsCard) return
+  if (!state.session) {
+    els.alertsCard.hidden = true
+    return
+  }
+
+  if (!pushSupported()) {
+    paintAlerts(isIosDevice() && !isInstalled() ? 'install' : 'unsupported')
+    return
+  }
+  if (Notification.permission === 'denied') {
+    paintAlerts('blocked')
+    return
+  }
+
+  const registration = await ensurePortalWorker()
+  if (!registration) {
+    paintAlerts('error')
+    return
+  }
+
+  let subscription = null
+  try {
+    subscription = await registration.pushManager.getSubscription()
+  } catch {
+    subscription = null
+  }
+
+  if (subscription) {
+    // The browser still holds a subscription; make sure the server agrees before saying "on".
+    const remote = await remotePushState()
+    if (!remote || remote.subscribed) {
+      paintAlerts('on')
+      return
+    }
+    // The server lost it (row pruned, device re-linked): re-save quietly, no second permission prompt.
+    try {
+      await saveSubscription(subscription)
+      paintAlerts('on')
+      return
+    } catch {
+      paintAlerts('off')
+      return
+    }
+  }
+
+  paintAlerts('off')
+}
+
+async function saveSubscription(subscription) {
+  const json = typeof subscription.toJSON === 'function' ? subscription.toJSON() : {}
+  const keys = json.keys || {}
+  const { data, error } = await client.rpc('save_push_subscription', {
+    p_device_token: state.session.device_token,
+    p_endpoint: cleanLine(json.endpoint, 1000),
+    p_p256dh: cleanLine(keys.p256dh, 200),
+    p_auth: cleanLine(keys.auth, 100),
+    p_user_agent: cleanLine(navigator.userAgent, 200),
+  })
+  if (error) throw new Error(friendlyError(error))
+  if (!data || data.error) throw new Error(cleanLine(data && data.error, 160) || 'Alerts could not be saved for this phone.')
+  return data
+}
+
+async function turnAlertsOn() {
+  const key = cleanLine(state.config.vapid, 300)
+  if (!key) throw new Error('Alerts are not set up on this site yet. Ask your teacher to update Student Hub.')
+
+  // The browser prompt only ever appears from this tap.
+  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission()
+  if (permission === 'denied') {
+    paintAlerts('blocked')
+    throw new Error(ALERTS_COPY.blocked)
+  }
+  if (permission !== 'granted') {
+    paintAlerts('off')
+    throw new Error('Alerts stay off until you allow notifications for this page.')
+  }
+
+  const registration = await ensurePortalWorker()
+  if (!registration) throw new Error(ALERTS_COPY.error)
+
+  let subscription = await registration.pushManager.getSubscription()
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: b64uToBytes(key),
+    })
+  }
+  await saveSubscription(subscription)
+  showToast('Alerts on · only your batch will reach this phone')
+}
+
+async function turnAlertsOff() {
+  const registration = await ensurePortalWorker()
+  const subscription = registration ? await registration.pushManager.getSubscription() : null
+  if (subscription) {
+    try {
+      await client.rpc('delete_push_subscription', {
+        p_device_token: state.session.device_token,
+        p_endpoint: subscription.endpoint,
+      })
+    } catch { /* the local unsubscribe below still stops this phone */ }
+    await subscription.unsubscribe().catch(() => {})
+  }
+  showToast('Alerts off for this phone')
+}
+
+async function toggleAlerts() {
+  if (!state.session || !els.alertsBtn || els.alertsBtn.disabled) return
+  els.alertsBtn.disabled = true
+  try {
+    if (state.alerts === 'on') await turnAlertsOff()
+    else await turnAlertsOn()
+  } catch (error) {
+    const message = cleanLine(error && error.message, 200) || 'Alerts could not be changed. Try again.'
+    if (els.alertsText) els.alertsText.textContent = message
+    showToast(message)
+  } finally {
+    els.alertsBtn.disabled = false
+    if (state.alerts !== 'blocked') await renderAlerts()
+  }
 }
 
 /* --------------------------------------------------------------------------------------------
@@ -880,6 +1096,7 @@ function subscribe() {
 }
 
 function bindControls() {
+  if (els.alertsBtn) els.alertsBtn.addEventListener('click', () => { void toggleAlerts() })
   els.search.addEventListener('input', () => { state.query = els.search.value; renderNotes() })
   els.subjectFilter.addEventListener('change', () => { state.subject = els.subjectFilter.value; renderNotes() })
   els.kindFilter.addEventListener('change', () => { state.kind = els.kindFilter.value; renderNotes() })
@@ -949,6 +1166,7 @@ async function start() {
   }
   subscribe()
   await enterHub()
+  void renderAlerts()
 
   window.setInterval(() => { if (!document.hidden) void loadAll() }, POLL_MS)
   window.setInterval(() => {
