@@ -268,6 +268,20 @@ describe('Student Hub push alerts (PA)', () => {
     expect(js).toContain("paintAlerts('install')")
   })
 
+  it('PA-17 the portal carries the iOS Home Screen tags that older iPhones read instead of the manifest', () => {
+    const html = read('student-hub/index.html')
+    expect(html).toContain('<meta name="apple-mobile-web-app-capable" content="yes" />')
+    expect(html).toContain('<meta name="apple-mobile-web-app-title" content="Student Hub" />')
+    expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />')
+    expect(html).toContain('<meta name="mobile-web-app-capable" content="yes" />')
+    // The icon iOS uses on the Home Screen must exist and be linked from the page.
+    expect(html).toContain('<link rel="apple-touch-icon" sizes="180x180" href="../student-apple-touch-icon-v15.png" />')
+    const manifest = JSON.parse(read('student-hub/manifest.webmanifest'))
+    expect(manifest.display).toBe('standalone')
+    expect(manifest.start_url).toBe('./')
+    expect(manifest.scope).toBe('./')
+  })
+
   it('PA-14 a note shows when it was shared under its title, not at the end of the pill row', () => {
     const js = read(PORTAL)
     const title = js.indexOf("card.append(top, elem('h3', 'note-title'")

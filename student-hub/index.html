@@ -15,7 +15,12 @@
     <link rel="icon" type="image/png" sizes="32x32" href="../favicon-light-32-v14.png" media="(prefers-color-scheme: light)" />
     <link rel="apple-touch-icon" sizes="180x180" href="../student-apple-touch-icon-v15.png" />
     <!-- An installable manifest is what lets an iPhone add the Hub to the Home Screen, which is
-         also the only way iOS will deliver class alerts. -->
+         also the only way iOS will deliver class alerts. The apple-* tags below are what older iOS
+         reads instead: standalone chrome, the name under the icon, and a transparent status bar. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Student Hub" />
     <link rel="manifest" href="./manifest.webmanifest?v=1" />
     <link rel="stylesheet" href="./styles.css?v=16" />
   </head>
