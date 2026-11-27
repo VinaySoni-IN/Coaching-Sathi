@@ -5,7 +5,7 @@ import Avatar from './Avatar'
 import { fileToAvatar } from '../lib/photo'
 import { isDob } from '../lib/ledger'
 import PhoneField from './PhoneField'
-import { EMPTY_PHONE, fromStored, phoneProblem, toStored } from '../lib/phone'
+import { EMPTY_PHONE, fromStored, parsePhone, phoneProblem, toStored } from '../lib/phone'
 import type { PhoneVal } from '../lib/phone'
 import { monthKey, newId, nextRoll, rollOwner } from '../lib/store'
 import { MONTHS, addMonths, courseConflict, inr, spanLabel } from '../lib/report'
@@ -48,7 +48,12 @@ function Shell({ open, onClose, title, sub, children, onSubmit }: { open: boolea
 }
 
 /* ---------- Add / edit / move / delete a student ---------- */
-export interface StudentTarget { batchId: string; student: Student | null }
+export interface StudentTarget {
+  batchId: string
+  student: Student | null
+  /** A contact shared into the app: the form opens with these filled in, never saved on their own. */
+  draft?: { name?: string; phone?: string }
+}
 type Settle = 'pending' | 'part' | 'paid'
 
 export function StudentForm({ target, batches, feeOf, inCourse, error, onClose, onSave, onDelete }: {
@@ -88,7 +93,9 @@ export function StudentForm({ target, batches, feeOf, inCourse, error, onClose, 
     setJoined(s?.joined ?? monthKey(new Date()))
     setDob(s?.dob ?? ''); setParentName(s?.parentName ?? ''); setParentPhone(fromStored(s?.parentPhone)); setPhoto(s?.photo ?? ''); setPhotoErr('')
     setMore(!!(s?.dob || s?.parentName || s?.parentPhone || s?.photo))
-    setName(s?.name ?? ''); setPhone(fromStored(s?.phone)); setBatchId(target.batchId)
+    setName(s?.name ?? target.draft?.name ?? '')
+    setPhone(s?.phone ? fromStored(s.phone) : target.draft?.phone ? parsePhone(target.draft.phone) : EMPTY_PHONE)
+    setBatchId(target.batchId)
     setRoll(s?.roll ?? ''); setSettle('pending'); setPart(''); setPlan('standard'); setCustom(''); setReason(''); setScope('onward')
   }, [target])
 
