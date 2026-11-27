@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { CloudUpload, Eye, EyeOff, GraduationCap, Loader2, LogIn, ShieldCheck, UserPlus } from 'lucide-react'
+import { CloudUpload, Eye, EyeOff, Loader2, LogIn, ShieldCheck, UserPlus } from 'lucide-react'
+import logo from '../assets/logo-v14.png'
 import { requestPasswordReset, signIn, signUp } from '../lib/auth'
 import type { Teacher } from '../lib/auth'
 import { seedJson } from '../lib/store'
@@ -62,7 +63,7 @@ export default function AuthScreen({ onAuth, note }: { onAuth: (t: Teacher, seed
       >
         <div className="relative z-10">
           <div className="mb-5 flex items-center gap-3">
-            <div className="lens grid h-12 w-12 place-items-center rounded-2xl"><GraduationCap size={24} /></div>
+            <img src={logo} alt="" className="h-12 w-12 shrink-0 rounded-2xl object-cover shadow-[0_6px_20px_-8px_rgba(0,0,0,.9)]" />
             <div>
               <h1 className="font-display text-[26px] font-semibold leading-none">Coaching Sathi</h1>
               <p className="mt-1 text-[13px] text-white/70">{mode === 'up' ? 'Create your teacher account' : mode === 'reset' ? 'Reset your password' : 'Teacher sign in'}</p>

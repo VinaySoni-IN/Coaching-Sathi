@@ -127,6 +127,7 @@ a { color: inherit; }
   font-weight: 700;
   letter-spacing: -.03em;
 }
+.brand-mark img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .sync-label {
   margin-left: auto;
   padding: 7px 11px;

@@ -117,7 +117,7 @@
       ]
     },
     {
-      "source": "/(icon-192-v10.png|icon-512-v10.png|icon-maskable-512-v10.png|apple-touch-icon-v10.png|favicon-v13.ico|favicon-anim-32-v13.png|favicon-anim-64-v13.png|favicon-128-v13.png)",
+      "source": "/(icon-192-v14.png|icon-512-v14.png|icon-maskable-512-v14.png|apple-touch-icon-v14.png|favicon-v14.ico|favicon-dark-32-v14.png|favicon-dark-48-v14.png|favicon-dark-128-v14.png|favicon-dark-180-v14.png|favicon-light-32-v14.png|favicon-light-48-v14.png|favicon-light-128-v14.png|favicon-light-180-v14.png)",
       "headers": [
         {
           "key": "Cache-Control",
