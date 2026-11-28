@@ -110,6 +110,32 @@ describe('Open source packaging (OS)', () => {
       expect(`${width}x${height}`, ref).toBe('780x1688')
     }
   })
+
+  it('OS-06 the sister app is linked from the README, with a flowchart that renders on GitHub', () => {
+    const readme = read('README.md')
+    expect(readme).toContain('## The Sathi ecosystem')
+    expect(readme).toContain('https://github.com/VinaySoni-IN/Collection-Sathi')
+    expect(readme).toContain('https://vinaysoni-in.github.io/Collection-Sathi/')
+    expect(readme).toContain('(docs/ecosystem.md)')
+
+    // The diagram is a real mermaid block, not a picture of one, and the README's own flow is closed.
+    const block = readme.match(/```mermaid\n([\s\S]*?)```/)
+    expect(block, 'README has a mermaid flowchart').toBeTruthy()
+    const diagram = (block as RegExpMatchArray)[1]
+    expect(diagram).toContain('flowchart LR')
+    expect(diagram).toContain('Coaching Sathi')
+    expect(diagram).toContain('Collection Sathi')
+    expect(diagram).toContain('Student Hub')
+
+    // The long-form page ships, carries the same diagram, and every relative link in it resolves.
+    const doc = read('docs/ecosystem.md')
+    expect(doc).toContain('```mermaid')
+    expect(doc).toContain('flowchart LR')
+    expect(doc).toContain('https://github.com/VinaySoni-IN/Collection-Sathi/releases/latest')
+    for (const link of Array.from(doc.matchAll(/\]\((?!https?:|#)([^)]+)\)/g)).map((m) => m[1])) {
+      expect(has(link), `docs/ecosystem.md links ${link}`).toBe(true)
+    }
+  })
 })
 
 describe('Installable PWA (PWA)', () => {
