@@ -15,7 +15,7 @@ anything that would be a false claim is deliberately absent. `tests/pwa.test.ts`
 | `launch_handler` | A second launch focuses the existing window instead of a duplicate | `client_mode: "navigate-existing"` (browser-implemented) |
 | `edge_side_panel` | Preferred width if the app is opened in a side panel | `preferred_width: 420` (browser-implemented) |
 | `display_override` | Installed windows fall back to `minimal-ui` where `standalone` is unavailable | `["standalone", "minimal-ui"]` |
-| `screenshots` | Richer Android install sheet, one per app | `public/screenshots/*` and `student-hub/screenshots/*`, both `780x1688` narrow |
+| `screenshots` | Android's richer install sheet: a six-shot carousel for the teacher app, so the install card never shows just two tiles. The shots are the README's own grid (deck, marked day, fees, students, hub, invoice) copied byte for byte into `public/screenshots/`; `tests/pwa.test.ts` fails if the two sets drift. The Student Hub ships its own single `780x1688` shot | `public/screenshots/*`, `student-hub/screenshots/portal-hub.png` |
 | `lang`, `dir`, `id`, `start_url`, `scope`, `display` | Base install identity for both apps | both manifests |
 | `prefer_related_applications: false` | No store app is being advertised | both manifests |
 | Service worker | Offline shell, and the share POST handler | `public/sw.js` (`coachsathi-v30`), registered in `src/main.tsx`; the portal registers `student-hub/sw.js` for push |

@@ -70,7 +70,8 @@ Supabase, and **no demo login is published here** — creating an account takes 
   grouped by folder for exactly the selected batch and teacher, and optional push alerts. Relative
   assets, anonymous SELECT-only client.
 - **Installable PWA** — standalone display, transparent-corner app icons at every size, maskable icon,
-  Apple touch icons, an offline-first service worker and install screenshots (`public/`, `sw.js`).
+  Apple touch icons, an offline-first service worker and an install sheet that shows the six screens above
+  (`public/screenshots/`, `sw.js`).
   The install surfaces are wired, not decorative: **shortcuts** open Attendance / Fees / Students / Hub,
   a `web+coachingsathi:` link does the same, opening a `.json` backup with the app goes straight to the
   restore confirmation, and the Android **share sheet** fills "Add student" from a shared contact.

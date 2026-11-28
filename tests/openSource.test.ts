@@ -143,7 +143,7 @@ describe('Installable PWA (PWA)', () => {
 
     // Install screenshots drive the richer Android install sheet; both files must ship in public/.
     expect(Array.isArray(m.screenshots)).toBe(true)
-    expect(m.screenshots.length).toBeGreaterThanOrEqual(2)
+    expect(m.screenshots.length).toBeGreaterThanOrEqual(4)
     for (const shot of m.screenshots as { src: string; sizes: string; form_factor: string }[]) {
       expect(has(`public/${shot.src}`), shot.src).toBe(true)
       expect(shot.form_factor).toBe('narrow')
@@ -163,7 +163,7 @@ describe('Installable PWA (PWA)', () => {
   })
 
   it('PWA-05 both pages bust the manifest cache when the manifest changes', () => {
-    expect(read('index.html')).toContain('manifest.webmanifest?v=17')
+    expect(read('index.html')).toContain('manifest.webmanifest?v=18')
     expect(read('student-hub/index.html')).toContain('manifest.webmanifest?v=3')
   })
 })
