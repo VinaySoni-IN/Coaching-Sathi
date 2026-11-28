@@ -120,7 +120,35 @@
       "sizes": "780x1688",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Swipe a student card left for present, right for absent"
+      "label": "Attendance deck: batch chips, swipe left for present, right for absent"
+    },
+    {
+      "src": "screenshots/install-marked.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Day fully marked, 7 present and 1 absent, ready to lock"
+    },
+    {
+      "src": "screenshots/install-fees.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Monthly fees, who has paid, and one-tap WhatsApp reminders"
+    },
+    {
+      "src": "screenshots/install-students.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Student list with batch filter, search and WhatsApp actions"
+    },
+    {
+      "src": "screenshots/install-hub.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Student Hub Manager: one magic link per student"
     },
     {
       "src": "screenshots/install-invoice.png",

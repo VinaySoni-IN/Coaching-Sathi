@@ -103,7 +103,41 @@ describe('Install surfaces (PWA)', () => {
     expect(portal).toContain("url.searchParams.delete('go')")
   })
 
-  it('PWA-06 both install sheets have screenshots that really ship, at the size they claim', () => {
+  it('PWA-06 the install sheet is a carousel, not two tiles: the README screens ship in order', () => {
+    const shots = manifest().screenshots as { src: string; sizes: string; form_factor: string; label: string }[]
+    expect(shots.length).toBeGreaterThanOrEqual(4)
+    // Same order as the README grid: deck, marked day, fees, students, hub, invoice.
+    expect(shots.map((s) => s.src)).toEqual([
+      'screenshots/install-attendance.png',
+      'screenshots/install-marked.png',
+      'screenshots/install-fees.png',
+      'screenshots/install-students.png',
+      'screenshots/install-hub.png',
+      'screenshots/install-invoice.png',
+    ])
+    for (const shot of shots) {
+      expect(shot.form_factor).toBe('narrow')
+      expect(shot.label.length).toBeGreaterThan(10)
+    }
+    // Each install screenshot is byte-for-byte the picture the README shows, so the two cannot drift.
+    const pairs: [string, string][] = [
+      ['install-attendance', '01-attendance'],
+      ['install-marked', '02-marked'],
+      ['install-fees', '03-fees'],
+      ['install-students', '04-students'],
+      ['install-hub', '05-hub'],
+      ['install-invoice', '09-invoice'],
+    ]
+    const readme = read('README.md')
+    for (const [install, doc] of pairs) {
+      expect(readme, doc).toContain(`docs/screenshots/${doc}.png`)
+      const a = readFileSync(resolve(process.cwd(), `public/screenshots/${install}.png`))
+      const b = readFileSync(resolve(process.cwd(), `docs/screenshots/${doc}.png`))
+      expect(a.equals(b), `${install}.png is docs/screenshots/${doc}.png`).toBe(true)
+    }
+  })
+
+  it('PWA-07 both install sheets have screenshots that really ship, at the size they claim', () => {
     for (const shot of manifest().screenshots as { src: string; sizes: string }[]) {
       expect(has(`public/${shot.src}`), shot.src).toBe(true)
       expect(pngSize(`public/${shot.src}`)).toBe(shot.sizes)
@@ -114,7 +148,7 @@ describe('Install surfaces (PWA)', () => {
     }
   })
 
-  it('PWA-07 the members we deliberately left out stay out, and the reasons are written down', () => {
+  it('PWA-08 the members we deliberately left out stay out, and the reasons are written down', () => {
     const m = manifest()
     for (const absent of ['iarc_rating_id', 'widgets', 'related_applications', 'scope_extensions']) {
       expect(absent in m, absent).toBe(false)
@@ -127,8 +161,8 @@ describe('Install surfaces (PWA)', () => {
     expect(doc).toContain('file_handlers')
   })
 
-  it('PWA-08 the new manifests are not served from a stale cache', () => {
-    expect(read('index.html')).toContain('manifest.webmanifest?v=17')
+  it('PWA-09 the new manifests are not served from a stale cache', () => {
+    expect(read('index.html')).toContain('manifest.webmanifest?v=18')
     expect(read('student-hub/index.html')).toContain('manifest.webmanifest?v=3')
     expect(read('student-hub/index.html')).toContain('portal.js?v=16')
     expect(read('public/sw.js')).toContain("const VERSION = 'coachsathi-v30'")
