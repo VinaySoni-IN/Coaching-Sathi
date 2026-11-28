@@ -125,6 +125,40 @@ Cloud features need a Supabase project:
 - Found something? Please report it privately — see [`SECURITY.md`](SECURITY.md). Never open a public
   issue containing a login, a magic link or a student's data.
 
+## The Sathi ecosystem
+
+Coaching Sathi has a sister app for money that is collected, not billed: **[Collection Sathi](https://github.com/VinaySoni-IN/Collection-Sathi)**
+tracks group collections — chanda, festival funds, class collections — with Cash + UPI, rounds, UPI
+verification, payment-proof images and a printable PDF report. It has no account and no server: everything
+stays on the device, exactly like this app.
+
+| | **Coaching Sathi** (this repo) | **[Collection Sathi](https://github.com/VinaySoni-IN/Collection-Sathi)** |
+| --- | --- | --- |
+| Question it answers | Was Aarav in class, and has he paid November? | How much has this round collected, and who is still unverified? |
+| Records | Attendance, per-student monthly fees, receipts, invoices | Per-person Cash/UPI entries, rounds, summaries, proof images |
+| Leaves the phone | The read-only Student Hub (optional), plus WhatsApp messages you send | Nothing |
+| Run it | [Teacher app](https://vinaysoni-in.github.io/Coaching-Sathi/) · [Student Hub](https://vinaysoni-in.github.io/Coaching-Sathi/student-hub/) | [Web app](https://vinaysoni-in.github.io/Collection-Sathi/) · [APK](https://github.com/VinaySoni-IN/Collection-Sathi/releases/latest) |
+
+```mermaid
+flowchart LR
+    T(["Teacher's phone"])
+
+    T --> CS["<b>Coaching Sathi</b><br/>attendance · fees · hub links · reports"]
+    T --> CO["<b>Collection Sathi</b><br/>collections · rounds · invoice · PDF"]
+
+    CS -->|"one magic link per student"| HUB(["Student Hub PWA<br/>live class · notes"])
+    CS -->|"invoice image"| WA(["WhatsApp to parent"])
+    CO -->|"invoice or PDF report"| WA
+
+    CS -.->|"stays on the device"| DEV[("localStorage")]
+    CO -.->|"stays on the device"| DEV
+    HUB -.->|"read-only, by batch"| DB[("Supabase<br/>optional")]
+```
+
+The two apps share no data and no account; they share a rule — **the phone is the database, and nothing
+uploads itself.** The full comparison, including where each app deliberately stops, is in
+[`docs/ecosystem.md`](docs/ecosystem.md).
+
 ## Project layout
 
 ```
@@ -150,7 +184,7 @@ student-hub/         standalone Student Portal: index.html, styles.css, portal.j
                      config.json, vendor/supabase.js
 supabase/            SQL migrations: tables, the notes view, storage policies, RLS
 tests/               Vitest suites (unit + component + E2E-style flows)
-docs/                screenshots, security audit, manifest audit notes (pwa.md), Student Hub notes
+docs/                screenshots, security audit, manifest audit notes (pwa.md), ecosystem.md, Student Hub notes
 ```
 
 ## Notes
